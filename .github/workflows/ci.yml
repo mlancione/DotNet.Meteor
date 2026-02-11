@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -68,6 +70,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -109,6 +113,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -116,7 +122,7 @@ jobs:
 
       - name: Resolve version
         id: version
-        shell: bash
+        shell: pwsh
         run: |
           if ("${env:GITHUB_REF}".StartsWith("refs/tags/")) {
             "value=$(${env:GITHUB_REF}.Substring(10))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -145,11 +151,13 @@ jobs:
 
   macos-tests:
     name: VSIX Builder (Tests MacOS)
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -186,11 +194,13 @@ jobs:
 
   linux-tests:
     name: VSIX Builder (Tests Linux)
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -227,11 +237,13 @@ jobs:
 
   windows-tests:
     name: VSIX Builder (Tests Windows)
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
