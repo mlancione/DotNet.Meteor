@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Version to use for VSIX builds on manual runs (defaults to 0.0.0-local)"
+        required: false
+        default: "0.0.0-local"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-vsix:
+    name: VSIX Builder (Linux)
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.event.inputs.release_version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Install Node tools
+        run: npm install -g vsce webpack webpack-cli
+
+      - name: Build VSIX (linux-x64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=linux-x64
+
+      - name: Build VSIX (linux-arm64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=linux-arm64
+
+      - name: Upload VSIX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Linux Build
+          path: artifacts/*.vsix
+          if-no-files-found: error
+
+  macos-vsix:
+    name: VSIX Builder (MacOS)
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.event.inputs.release_version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Install Node tools
+        run: npm install -g vsce webpack webpack-cli
+
+      - name: Build VSIX (osx-x64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=osx-x64
+
+      - name: Build VSIX (osx-arm64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=osx-arm64
+
+      - name: Upload VSIX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacOS Build
+          path: artifacts/*.vsix
+          if-no-files-found: error
+
+  windows-vsix:
+    name: VSIX Builder (Windows)
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if ("${env:GITHUB_REF}".StartsWith("refs/tags/")) {
+            "value=$(${env:GITHUB_REF}.Substring(10))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "value=${{ github.event.inputs.release_version }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Install Node tools
+        run: npm install -g vsce webpack webpack-cli
+
+      - name: Build VSIX (win-x64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=win-x64
+
+      - name: Build VSIX (win-arm64)
+        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=win-arm64
+
+      - name: Upload VSIX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows Build
+          path: artifacts/*.vsix
+          if-no-files-found: error
+
+  macos-tests:
+    name: VSIX Builder (Tests MacOS)
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-macos
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
+
+  linux-tests:
+    name: VSIX Builder (Tests Linux)
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
+
+  windows-tests:
+    name: VSIX Builder (Tests Windows)
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
