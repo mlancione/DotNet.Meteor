@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Version to use for VSIX builds on manual runs (defaults to 0.0.0-local)"
+        description: "Version to use for VSIX builds on manual runs (defaults to 6.2.10)"
         required: false
-        default: "0.0.0-local"
+        default: "6.2.10"
 
 permissions:
   contents: read
