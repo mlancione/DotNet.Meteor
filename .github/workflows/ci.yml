@@ -1,0 +1,258 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['local-v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'VSIX version (X.Y.Z)'
+        required: true
+        default: '6.2.12'
+      publish_release:
+        description: 'Attach all six VSIX files to a GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  extension-tests:
+    name: Extension checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Resolve and validate version
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.release_version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/local-v}"
+          else
+            VERSION="${REQUESTED_VERSION:-$(node -p 'require("./package.json").version')}"
+          fi
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Version must be X.Y.Z'; exit 1; }
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
+
+  vsix:
+    name: VSIX Builder (${{ matrix.platform }})
+    needs: extension-tests
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-latest
+            runtime: linux
+          - platform: MacOS
+            runner: macos-latest
+            runtime: osx
+          - platform: Windows
+            runner: windows-latest
+            runtime: win
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      RELEASE_VERSION: ${{ needs.extension-tests.outputs.version }}
+      BUILD_RUNTIME: ${{ matrix.runtime }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Restore .NET tools
+        run: dotnet tool restore
+      - name: Build VSIX (x64)
+        shell: bash
+        run: dotnet cake --target=vsix --release-version="$RELEASE_VERSION" --configuration=release --arch="$BUILD_RUNTIME-x64"
+      - name: Build VSIX (arm64)
+        shell: bash
+        run: dotnet cake --target=vsix --release-version="$RELEASE_VERSION" --configuration=release --arch="$BUILD_RUNTIME-arm64"
+      - name: Verify VSIX identity
+        shell: bash
+        run: python scripts/verify-vsix.py "$RELEASE_VERSION" artifacts/*.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }} Build
+          path: artifacts/*.vsix
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [extension-tests, vsix]
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: meteor-local-release-${{ needs.extension-tests.outputs.version }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ needs.extension-tests.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '* Build'
+          path: artifacts
+          merge-multiple: true
+      - name: Verify all release packages
+        run: python scripts/verify-vsix.py "$RELEASE_VERSION" --all-targets artifacts/*.vsix
+      - name: Publish VSIX files
+        run: bash scripts/publish-release.sh
+
+  macos-tests:
+    name: VSIX Builder (Tests MacOS)
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-macos
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
+
+  linux-tests:
+    name: VSIX Builder (Tests Linux)
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
+
+  windows-tests:
+    name: VSIX Builder (Tests Windows)
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          dotnet cake --target=test --configuration=release
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Ensure test results exist
+        if: always()
+        shell: bash
+        run: ls artifacts/*.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: artifacts/*.trx
+          if-no-files-found: error
+
+      - name: Fail on test errors
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1

@@ -2,6 +2,7 @@ import { Interop } from '../interop/interop';
 import { StatusBarController } from "./statusbarController";
 import { Project } from '../models/project';
 import { Device } from '../models/device';
+import { supportsFramework } from '../models/deviceSelection';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -13,6 +14,7 @@ export class ConfigurationController {
     public static project: Project | undefined;
     public static device: Device | undefined;
     public static configuration: string | undefined;
+    public static targetFramework: string | undefined;
 
     public static onWindows: boolean = process.platform === 'win32';
     public static onLinux: boolean = process.platform === 'linux';
@@ -50,7 +52,8 @@ export class ConfigurationController {
 			vscode.window.showErrorMessage(res.messageDebugWithProfilerNotSupported, { modal: true });
 			return false;
 		}
-        if (!StatusBarController.devices.some(it => it.name === ConfigurationController.device?.name)) {
+        if (!StatusBarController.devices.includes(ConfigurationController.device) ||
+            !supportsFramework(ConfigurationController.device, ConfigurationController.getTargetFramework())) {
             vscode.window.showErrorMessage(res.messageDeviceNotExists, { modal: true });
             return false;
         }
@@ -89,12 +92,12 @@ export class ConfigurationController {
         return ConfigurationController.getSetting<boolean>(res.configIdUninstallApplicationBeforeInstalling, true);
     }
     public static getTargetFramework(): string | undefined {
-        const framework = ConfigurationController.project?.frameworks.find(it => it.includes(ConfigurationController.device?.platform ?? 'undefined'));
-        if (framework === undefined && (ConfigurationController.isWindows() || ConfigurationController.isMacCatalyst()))
-            return ConfigurationController.project?.frameworks.find(it => !it.includes('-'));
-
-        return framework;
+        const frameworks = ConfigurationController.project?.frameworks ?? [];
+        if (ConfigurationController.targetFramework && frameworks.includes(ConfigurationController.targetFramework))
+            return ConfigurationController.targetFramework;
+        return frameworks.find(framework => supportsFramework(ConfigurationController.device, framework));
     }
+
     public static getDebuggerOptions(): any {
         return {
             evaluationOptions: {

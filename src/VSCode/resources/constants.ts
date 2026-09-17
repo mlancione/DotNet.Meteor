@@ -1,6 +1,8 @@
+// Keep the contribution namespace compatible with existing launch.json and tasks.json.
 export const extensionId = "dotnet-meteor";
-export const extensionPublisher = "nromanov";
-export const extensionDisplayName = ".NET Meteor";
+export const extensionName = "dotnet-meteor-local";
+export const extensionPublisher = "localdev";
+export const extensionDisplayName = ".NET Meteor (Local)";
 
 export const dotrushExtensionId = "nromanov.dotrush";
 
@@ -8,7 +10,7 @@ export const commandIdSelectActiveProject = "dotnet-meteor.selectActiveProject";
 export const commandTitleSelectActiveProject = "Select workspace project";
 
 export const commandIdSelectActiveConfiguration = "dotnet-meteor.selectActiveConfiguration";
-export const commandTitleSelectActiveConfiguration = "Select project configuration";
+export const commandTitleSelectActiveConfiguration = "Select configuration and target framework";
 
 export const commandIdSelectActiveDevice = "dotnet-meteor.selectActiveDevice";
 export const commandTitleSelectActiveDevice = "Select device";
@@ -28,7 +30,7 @@ export const taskDefinitionDefaultTargetCapitalized = "Build";
 export const taskProblemMatcherId = "dotnet-meteor.problemMatcher";
 
 export const debuggerMeteorId = "dotnet-meteor.debugger";
-export const debuggerMeteorTitle = ".NET Meteor Debugger";
+export const debuggerMeteorTitle = ".NET Meteor (Local) Debugger";
 export const debuggerVsdbgId = "coreclr";
 
 export const extendedViewIdModules = "dotnet-meteor.modulesView";
