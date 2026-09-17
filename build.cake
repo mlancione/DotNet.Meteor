@@ -6,7 +6,7 @@ public string ArtifactsDirectory => _Path.Combine(RootDirectory, "artifacts");
 public string ExtensionStagingDirectory => _Path.Combine(RootDirectory, "extension");
 
 var target = Argument("target", "vsix");
-var version = Argument("release-version", "6.2.11");
+var version = Argument("release-version", "6.2.12");
 var configuration = Argument("configuration", "debug");
 var runtime = Argument("arch", RuntimeInformation.RuntimeIdentifier);
 

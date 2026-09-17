@@ -1,6 +1,6 @@
 # .NET Meteor (Local)
 
-This fork installs as **`mlancione.dotnet-meteor-local`**, separately from official .NET Meteor. Keep Microsoft C# and C# Dev Kit enabled; DotRush is not required. Disable official Meteor in the VS Code profile where you enable this fork, because the debugger, command, task and setting identifiers are intentionally preserved for existing projects.
+This fork installs as **`localdev.dotnet-meteor-local`**, separately from official .NET Meteor. Keep Microsoft C# and C# Dev Kit enabled; DotRush is not required. Disable official Meteor in the VS Code profile where you enable this fork, because the debugger, command, task and setting identifiers are intentionally preserved for existing projects.
 
 Download packages from [GitHub Releases](https://github.com/mlancione/DotNet.Meteor/releases) and run **Extensions: Install from VSIX**. Release assets are retained independently of expiring Actions artifacts. Saved workspace selections start fresh when moving from the official extension ID.
 
@@ -11,7 +11,7 @@ To build and publish all six packages:
 ```sh
 gh workflow run ci.yml --repo mlancione/DotNet.Meteor \
   --ref ci/fork-github-actions-vsix \
-  -f release_version=6.2.11 -f publish_release=true
+  -f release_version=6.2.12 -f publish_release=true
 ```
 
 Use a new numeric version for changed source. Set `publish_release=false` for artifact-only builds. Successful release builds create `local-v<VERSION>` at the exact built commit and attach Linux, macOS and Windows x64/ARM64 VSIX files. Tag pushes matching `local-v*` also publish releases. The GitHub workflow does not publish to the VS Code Marketplace.
