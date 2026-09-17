@@ -1,7 +1,7 @@
 ## How to work with the repository
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/en/) (latest)
+- [Node.js](https://nodejs.org/en/) 22.22.0 (see `.nvmrc`; `nvm use` if available)
 - [.NET SDK](https://dotnet.microsoft.com/download) (latest)
 
 ### Clone the repository
@@ -26,6 +26,9 @@ The `src/` folder contains the source code of the repository. It has the followi
 ### Build the projects
 To build the projects, you can use the [build.cake](https://github.com/JaneySprings/DotNet.Meteor/blob/main/build.cake) script in the root folder. It will run the `vsix` target in the `debug` configuration by default:
 ```bash
+npm ci
+npm run typecheck
+npm test
 dotnet tool restore
 dotnet cake
 ```

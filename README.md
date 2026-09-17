@@ -1,3 +1,25 @@
+# .NET Meteor (Local)
+
+This fork installs as **`mlancione.dotnet-meteor-local`**, separately from official .NET Meteor. Keep Microsoft C# and C# Dev Kit enabled; DotRush is not required. Disable official Meteor in the VS Code profile where you enable this fork, because the debugger, command, task and setting identifiers are intentionally preserved for existing projects.
+
+Download packages from [GitHub Releases](https://github.com/mlancione/DotNet.Meteor/releases) and run **Extensions: Install from VSIX**. Release assets are retained independently of expiring Actions artifacts. Saved workspace selections start fresh when moving from the official extension ID.
+
+Click the configuration item in the status bar to choose a configuration and target framework (for example, `Debug | net9.0-ios`). The device picker lists compatible devices and remembers your choice separately for each framework. The framework is also remembered per project. A disconnected preferred device retains its preference until you explicitly choose another device.
+
+To build and publish all six packages:
+
+```sh
+gh workflow run ci.yml --repo mlancione/DotNet.Meteor \
+  --ref ci/fork-github-actions-vsix \
+  -f release_version=6.2.11 -f publish_release=true
+```
+
+Use a new numeric version for changed source. Set `publish_release=false` for artifact-only builds. Successful release builds create `local-v<VERSION>` at the exact built commit and attach Linux, macOS and Windows x64/ARM64 VSIX files. Tag pushes matching `local-v*` also publish releases. The GitHub workflow does not publish to the VS Code Marketplace.
+
+Build tooling uses the Node version in `.nvmrc`, locked npm dependencies, and project-local `@vscode/vsce` (no global packaging tools needed). Run `npm ci`, `npm run typecheck`, `npm test`, and `npm run package` for extension checks.
+
+The original documentation follows; debugging and profiling remain based on the Meteor 6.x architecture.
+
 <img src="https://github.com/JaneySprings/DotNet.Meteor/raw/main/assets/header.jpg" width="1180px" alt=".NET Meteor" align="center" />
 
 ## Overview
