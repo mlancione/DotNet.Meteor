@@ -18,11 +18,11 @@ if ! gh release view "$TAG" >/dev/null 2>&1; then
     --notes-file .github/release-notes.md \
     --draft
 fi
-# Bound individual uploads so an interrupted request can be retried.
+# Use HTTP/1.1 to avoid stalled HTTP/2 uploads; bound and retry each file.
 # Keep the release draft until every asset has been uploaded successfully.
 for asset in artifacts/*.vsix; do
-  if ! timeout 120s gh release upload "$TAG" "$asset" --clobber; then
-    timeout 120s gh release upload "$TAG" "$asset" --clobber
+  if ! GODEBUG=http2client=0 timeout 120s gh release upload "$TAG" "$asset" --clobber; then
+    GODEBUG=http2client=0 timeout 120s gh release upload "$TAG" "$asset" --clobber
   fi
 done
 gh release edit "$TAG" --draft=false --latest

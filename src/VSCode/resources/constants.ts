@@ -1,7 +1,7 @@
 // Keep the contribution namespace compatible with existing launch.json and tasks.json.
 export const extensionId = "dotnet-meteor";
 export const extensionName = "dotnet-meteor-local";
-export const extensionPublisher = "mlancione";
+export const extensionPublisher = "localdev";
 export const extensionDisplayName = ".NET Meteor (Local)";
 
 export const dotrushExtensionId = "nromanov.dotrush";

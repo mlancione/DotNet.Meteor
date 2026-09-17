@@ -14,7 +14,7 @@ for path in args.files:
     with zipfile.ZipFile(path) as archive:
         manifest = json.loads(archive.read("extension/package.json"))
         assert manifest["name"] == "dotnet-meteor-local", path
-        assert manifest["publisher"] == "mlancione", path
+        assert manifest["publisher"] == "localdev", path
         assert manifest["version"] == args.version, path
         assert "nromanov.dotrush" not in manifest.get("extensionDependencies", []), path
         root = ET.fromstring(archive.read("extension.vsixmanifest"))

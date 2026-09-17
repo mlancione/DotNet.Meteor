@@ -1,7 +1,7 @@
 {
   "name": "dotnet-meteor-local",
-  "publisher": "mlancione",
-  "version": "6.2.11",
+  "publisher": "localdev",
+  "version": "6.2.12",
   "description": "Run and Debug .NET Apps (MAUI, Avalonia, Xamarin.Native)",
   "displayName": ".NET Meteor (Local)",
   "author": "Nikita Romanov",

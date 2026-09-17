@@ -1,6 +1,6 @@
 .NET Meteor (Local), an independent build of the Mono-based Meteor extension.
 
-- Extension ID: `mlancione.dotnet-meteor-local`.
+- Extension ID: `localdev.dotnet-meteor-local`.
 - Separate device preferences for each target framework, selected through the configuration picker.
 - No DotRush dependency. Keep C# and C# Dev Kit enabled.
 - Existing `dotnet-meteor.debugger` launch configurations and tasks remain compatible.
