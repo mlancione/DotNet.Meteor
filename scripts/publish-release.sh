@@ -11,12 +11,18 @@ if git show-ref --verify --quiet "refs/tags/$TAG"; then
     exit 1
   }
 fi
-if gh release view "$TAG" >/dev/null 2>&1; then
-  gh release upload "$TAG" artifacts/*.vsix --clobber
-else
-  gh release create "$TAG" artifacts/*.vsix \
+if ! gh release view "$TAG" >/dev/null 2>&1; then
+  gh release create "$TAG" \
     --target "$GITHUB_SHA" \
     --title ".NET Meteor (Local) $RELEASE_VERSION" \
     --notes-file .github/release-notes.md \
-    --latest
+    --draft
 fi
+# Bound individual uploads so an interrupted request can be retried.
+# Keep the release draft until every asset has been uploaded successfully.
+for asset in artifacts/*.vsix; do
+  if ! timeout 120s gh release upload "$TAG" "$asset" --clobber; then
+    timeout 120s gh release upload "$TAG" "$asset" --clobber
+  fi
+done
+gh release edit "$TAG" --draft=false --latest
