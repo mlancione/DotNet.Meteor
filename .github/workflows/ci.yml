@@ -2,152 +2,131 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "*"
+    branches: [main]
+    tags: ['local-v*']
   pull_request:
-    branches:
-      - "*"
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Version to use for VSIX builds on manual runs (defaults to 6.2.10)"
-        required: false
-        default: "6.2.10"
+        description: 'VSIX version (X.Y.Z)'
+        required: true
+        default: '6.2.11'
+      publish_release:
+        description: 'Attach all six VSIX files to a GitHub Release'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
-  linux-vsix:
-    name: VSIX Builder (Linux)
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+  extension-tests:
+    name: Extension checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          submodules: recursive
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "9.x"
-
-      - name: Resolve version
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Resolve and validate version
         id: version
-        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.release_version }}
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/local-v}"
           else
-            echo "value=${{ github.event.inputs.release_version }}" >> "$GITHUB_OUTPUT"
+            VERSION="${REQUESTED_VERSION:-$(node -p 'require("./package.json").version')}"
           fi
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Version must be X.Y.Z'; exit 1; }
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
 
-      - name: Restore .NET tools
-        run: dotnet tool restore
-
-      - name: Install Node tools
-        run: npm install -g vsce webpack webpack-cli
-
-      - name: Build VSIX (linux-x64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=linux-x64
-
-      - name: Build VSIX (linux-arm64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=linux-arm64
-
-      - name: Upload VSIX artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Linux Build
-          path: artifacts/*.vsix
-          if-no-files-found: error
-
-  macos-vsix:
-    name: VSIX Builder (MacOS)
+  vsix:
+    name: VSIX Builder (${{ matrix.platform }})
+    needs: extension-tests
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "9.x"
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${{ github.event.inputs.release_version }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Restore .NET tools
-        run: dotnet tool restore
-
-      - name: Install Node tools
-        run: npm install -g vsce webpack webpack-cli
-
-      - name: Build VSIX (osx-x64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=osx-x64
-
-      - name: Build VSIX (osx-arm64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=osx-arm64
-
-      - name: Upload VSIX artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: MacOS Build
-          path: artifacts/*.vsix
-          if-no-files-found: error
-
-  windows-vsix:
-    name: VSIX Builder (Windows)
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-latest
+            runtime: linux
+          - platform: MacOS
+            runner: macos-latest
+            runtime: osx
+          - platform: Windows
+            runner: windows-latest
+            runtime: win
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
+    env:
+      RELEASE_VERSION: ${{ needs.extension-tests.outputs.version }}
+      BUILD_RUNTIME: ${{ matrix.runtime }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.x"
-
-      - name: Resolve version
-        id: version
-        shell: pwsh
-        run: |
-          if ("${env:GITHUB_REF}".StartsWith("refs/tags/")) {
-            "value=$(${env:GITHUB_REF}.Substring(10))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          } else {
-            "value=${{ github.event.inputs.release_version }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
-
+          dotnet-version: '9.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - name: Restore .NET tools
         run: dotnet tool restore
-
-      - name: Install Node tools
-        run: npm install -g vsce webpack webpack-cli
-
-      - name: Build VSIX (win-x64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=win-x64
-
-      - name: Build VSIX (win-arm64)
-        run: dotnet cake --target=vsix --release-version=${{ steps.version.outputs.value }} --configuration=release --arch=win-arm64
-
-      - name: Upload VSIX artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build VSIX (x64)
+        shell: bash
+        run: dotnet cake --target=vsix --release-version="$RELEASE_VERSION" --configuration=release --arch="$BUILD_RUNTIME-x64"
+      - name: Build VSIX (arm64)
+        shell: bash
+        run: dotnet cake --target=vsix --release-version="$RELEASE_VERSION" --configuration=release --arch="$BUILD_RUNTIME-arm64"
+      - name: Verify VSIX identity
+        shell: bash
+        run: python scripts/verify-vsix.py "$RELEASE_VERSION" artifacts/*.vsix
+      - uses: actions/upload-artifact@v4
         with:
-          name: Windows Build
+          name: ${{ matrix.platform }} Build
           path: artifacts/*.vsix
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [extension-tests, vsix]
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: meteor-local-release-${{ needs.extension-tests.outputs.version }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ needs.extension-tests.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '* Build'
+          path: artifacts
+          merge-multiple: true
+      - name: Verify all release packages
+        run: python scripts/verify-vsix.py "$RELEASE_VERSION" --all-targets artifacts/*.vsix
+      - name: Publish VSIX files
+        run: bash scripts/publish-release.sh
 
   macos-tests:
     name: VSIX Builder (Tests MacOS)

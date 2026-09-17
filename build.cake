@@ -6,7 +6,7 @@ public string ArtifactsDirectory => _Path.Combine(RootDirectory, "artifacts");
 public string ExtensionStagingDirectory => _Path.Combine(RootDirectory, "extension");
 
 var target = Argument("target", "vsix");
-var version = Argument("release-version", "1.0.0");
+var version = Argument("release-version", "6.2.11");
 var configuration = Argument("configuration", "debug");
 var runtime = Argument("arch", RuntimeInformation.RuntimeIdentifier);
 
@@ -93,9 +93,9 @@ Task("vsix")
 	.IsDependentOn("debugger")
 	.Does(() => {
 		var vsruntime = runtime.Replace("win-", "win32-").Replace("osx-", "darwin-");
-		var output = _Path.Combine(ArtifactsDirectory, $"DotNet.Meteor.v{version}_{vsruntime}.vsix");
-		ExecuteCommand("npm", "install");
-		ExecuteCommand("vsce", $"package --target {vsruntime} --out {output} --no-git-tag-version {version}");
+		var output = _Path.Combine(ArtifactsDirectory, $"DotNet.Meteor.Local.v{version}_{vsruntime}.vsix");
+		ExecuteCommand("npm", "ci");
+		ExecuteCommand("npm", $"run vsix -- --target {vsruntime} --out {output} --no-git-tag-version {version}");
 	});
 
 

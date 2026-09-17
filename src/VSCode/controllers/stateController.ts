@@ -2,6 +2,7 @@ import { ConfigurationController } from './configurationController';
 import { StatusBarController } from './statusbarController';
 import { ExtensionContext } from 'vscode';
 import { Device } from '../models/device';
+import { deviceId, supportsFramework } from '../models/deviceSelection';
 import { Project } from '../models/project';
 
 export class StateController {
@@ -19,8 +20,20 @@ export class StateController {
              StateController.context.workspaceState.update('project', ConfigurationController.project?.path);
     }
     public static saveDevice() {
-        if (StateController.context !== undefined)
-            StateController.context.workspaceState.update('device', StateController.getDeviceId(ConfigurationController.device));
+        const framework = ConfigurationController.getTargetFramework();
+        const device = ConfigurationController.device;
+        if (framework && device && StateController.context)
+            StateController.context.workspaceState.update(`device_${framework}`, deviceId(device));
+    }
+    public static saveFramework() {
+        const project = ConfigurationController.project;
+        if (project && StateController.context)
+            StateController.context.workspaceState.update(`framework_${project.path}`, ConfigurationController.targetFramework);
+    }
+    public static getFramework(): string | undefined {
+        const project = ConfigurationController.project;
+        const saved = StateController.context?.workspaceState.get<string>(`framework_${project?.path}`);
+        return project?.frameworks.find(framework => framework === saved);
     }
     public static saveConfiguration() {
         if (StateController.context !== undefined)
@@ -42,14 +55,18 @@ export class StateController {
         const project = StateController.getProject();
         return project?.configurations.find(it => it === target);
     }
-    public static getDevice() : Device | undefined {
-        if (StateController.context === undefined)
+    public static getDevice(): Device | undefined {
+        const framework = ConfigurationController.getTargetFramework();
+        if (!framework || !StateController.context)
             return undefined;
-
-        const device = StateController.context.workspaceState.get<string>('device');
-        return StatusBarController.devices.find(it => StateController.getDeviceId(it) === device);
+        const saved = StateController.context.workspaceState.get<string>(`device_${framework}`);
+        const compatible = StatusBarController.devices.filter(device => supportsFramework(device, framework));
+        if (saved !== undefined)
+            return compatible.find(device => deviceId(device) === saved);
+        // Migrate the old workspace-wide preference only when it matches this framework.
+        const legacy = StateController.context.workspaceState.get<string>('device');
+        return compatible.find(device => `${device.name}_${device.platform}_${device.os_version}` === legacy);
     }
-
 
     public static getGlobal<TValue>(key: string): TValue | undefined {
         return StateController.context?.globalState.get<TValue>(key);
@@ -58,7 +75,4 @@ export class StateController {
         StateController.context?.globalState.update(key, value);
     }
 
-    private static getDeviceId(device: Device | undefined): string {
-        return device ? `${device.name}_${device.platform}_${device.os_version}` : 'null';
-    }
 }
