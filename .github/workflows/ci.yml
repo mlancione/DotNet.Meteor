@@ -10,7 +10,7 @@ on:
       release_version:
         description: 'VSIX version (X.Y.Z)'
         required: true
-        default: '6.2.13'
+        default: '6.2.14'
       publish_release:
         description: 'Attach all six VSIX files to a GitHub Release'
         type: boolean
