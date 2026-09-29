@@ -63,12 +63,22 @@ public class ProcessRunner {
 
     public ProcessResult WaitForExit(int timeout = -1) {
         Start();
+        if (timeout >= 0 && !process.WaitForExit(timeout)) {
+            var executable = process.StartInfo.FileName;
+            try {
+                try {
+                    process.Kill(entireProcessTree: true);
+                } catch (InvalidOperationException) {
+                    // The process may have exited between the wait and kill.
+                }
+                process.WaitForExit();
+            } finally {
+                process.Close();
+            }
+            throw new TimeoutException($"Process '{executable}' exceeded {timeout} ms.");
+        }
+        // Flush asynchronous stdout/stderr callbacks after a timed wait succeeds.
         process.WaitForExit();
-        //TODO: Not working with node.js child_process
-        // if (timeout > 0)
-        //     process.WaitForExit(timeout);
-        // else
-        //     process.WaitForExit();
 
         var exitCode = process.ExitCode;
         process.Close();

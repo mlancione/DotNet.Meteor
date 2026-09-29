@@ -1,7 +1,7 @@
 {
   "name": "dotnet-meteor-local",
   "publisher": "localdev",
-  "version": "6.2.12",
+  "version": "6.2.13",
   "description": "Run and Debug .NET Apps (MAUI, Avalonia, Xamarin.Native)",
   "displayName": ".NET Meteor (Local)",
   "author": "Nikita Romanov",
@@ -262,6 +262,11 @@
             "type": "boolean",
             "default": true,
             "description": "%configuration.description.applyHotReloadChangesOnSave%"
+          },
+          "dotnetMeteor.dotnetPath": {
+            "type": "string",
+            "default": "",
+            "description": "Absolute path to the dotnet executable used for project builds, property evaluation and Apple launch tools. Defaults to dotnet on VS Code\u2019s PATH."
           }
         }
       },

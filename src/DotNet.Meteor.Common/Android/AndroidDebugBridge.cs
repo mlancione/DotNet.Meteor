@@ -11,7 +11,7 @@ public static class AndroidDebugBridge {
             .Append("-s", serial)
             .Append("shell")
             .Append(args))
-            .WaitForExit();
+            .WaitForExit(args.FirstOrDefault() == "getprop" ? 5000 : -1);
 
         if (!result.Success)
             return string.Join(Environment.NewLine, result.StandardError);
@@ -38,13 +38,14 @@ public static class AndroidDebugBridge {
         if (!result.Success)
             throw new InvalidOperationException(string.Join(Environment.NewLine, result.StandardError));
 
-        string regex = @"^(?<serial>\S+?)(\s+?)\s+(?<state>\S+)";
+        string regex = @"^(?<serial>\S+)\s+(?<state>\S+)";
         var devices = new List<string>();
 
         foreach (string line in result.StandardOutput) {
             MatchCollection matches = Regex.Matches(line, regex, RegexOptions.Singleline);
-            if (matches.Count == 0)
+            if (matches.Count == 0 || matches.First().Groups["state"].Value != "device") {
                 continue;
+            }
 
             devices.Add(matches.First().Groups["serial"].Value);
         }
@@ -193,7 +194,7 @@ public static class AndroidDebugBridge {
         var adb = AndroidSdkLocator.AdbTool();
         ProcessResult result = new ProcessRunner(adb, new ProcessArgumentBuilder()
             .Append("start-server"))
-            .WaitForExit();
+            .WaitForExit(10000);
 
         return result.Success;
     }

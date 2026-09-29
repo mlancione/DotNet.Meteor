@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using DotNet.Meteor.Debugger.Extensions;
 using DotNet.Meteor.Debugger.Sdb;
 using DotNet.Meteor.Common;
@@ -13,6 +14,10 @@ public class DebugLaunchAgent : BaseLaunchAgent {
     private readonly SoftDebuggerStartArgs startArguments;
     private readonly SoftDebuggerStartInfo startInformation;
     private readonly ExternalTypeResolver typeResolver;
+    private Process? simulatorLauncher;
+    private SimulatorLaunchWatchdog? simulatorWatchdog;
+    private DebugSession? debugSession;
+    private int launchCompleted;
 
     public DebugLaunchAgent(LaunchConfiguration configuration) : base(configuration) {
         if (configuration.Device.IsAndroid || (configuration.Device.IsIPhone && !configuration.Device.IsEmulator))
@@ -21,12 +26,18 @@ public class DebugLaunchAgent : BaseLaunchAgent {
             startArguments = new ServerConnectionProvider(IPAddress.Loopback, configuration.DebugPort, configuration.Project.Name);
 
         ArgumentNullException.ThrowIfNull(startArguments, "Debugger connection arguments not implemented.");
+        if (startArguments is ServerConnectionProvider serverConnection) {
+            // The listener is opened in the provider constructor, before Run.
+            // Also close it if deployment fails before Mono begins connecting.
+            Disposables.Add(() => serverConnection.CancelConnect(null!));
+        }
 
         typeResolver = new ExternalTypeResolver(configuration.TransportId);
         startInformation = new SoftDebuggerStartInfo(startArguments);
         startInformation.SetAssemblies(configuration.GetAssembliesPath(), configuration.DebuggerSessionOptions);
     }
     public override void Launch(DebugSession debugSession) {
+        this.debugSession = debugSession;
         if (Configuration.Device.IsAndroid)
             LaunchAndroid(debugSession);
         if (Configuration.Device.IsIPhone)
@@ -38,32 +49,51 @@ public class DebugLaunchAgent : BaseLaunchAgent {
     }
     public override void Connect(SoftDebuggerSession session) {
         session.Run(startInformation, Configuration.DebuggerSessionOptions);
+        Disposables.Add(() => typeResolver.Dispose());
         if (typeResolver.TryConnect()) {
-            Disposables.Add(() => typeResolver.Dispose());
             session.TypeResolverHandler = typeResolver.Resolve;
         }
+
+        if (simulatorLauncher != null && Volatile.Read(ref launchCompleted) == 0) {
+            simulatorWatchdog = new SimulatorLaunchWatchdog(simulatorLauncher, TimeSpan.FromSeconds(120), message => {
+                debugSession!.FailLaunch($"{message} Simulator: {Configuration.Device.Name} ({Configuration.Device.Serial}). Launcher: {simulatorLauncher.StartInfo.FileName}. Check the selected Xcode, iOS workload and simulator, then retry.");
+            });
+            Disposables.Add(() => simulatorWatchdog.Dispose());
+            if (Volatile.Read(ref launchCompleted) != 0) {
+                simulatorWatchdog.Dispose();
+            } else {
+                debugSession!.OnDebugDataReceived($"Waiting up to 120 seconds for simulator debugger attachment: {Configuration.Device.Serial}");
+                simulatorWatchdog.Start();
+            }
+        }
+    }
+
+    public void CompleteLaunch() {
+        Interlocked.Exchange(ref launchCompleted, 1);
+        simulatorWatchdog?.Dispose();
     }
 
     private void LaunchAppleMobile(DebugSession debugSession) {
         if (RuntimeSystem.IsMacOS) {
             if (Configuration.Device.IsEmulator) {
                 var debugProcess = MonoLauncher.DebugSim(Configuration.Device.Serial, Configuration.ProgramPath, Configuration.DebugPort, Configuration.EnvironmentVariables, debugSession);
+                simulatorLauncher = debugProcess;
                 Disposables.Add(() => debugProcess.Terminate());
             } else {
                 var debugPortForwarding = MonoLauncher.TcpTunnel(Configuration.Device.Serial, Configuration.DebugPort, debugSession);
+                Disposables.Add(() => debugPortForwarding.Terminate());
                 var hotReloadPortForwarding = MonoLauncher.TcpTunnel(Configuration.Device.Serial, Configuration.ReloadHostPort, debugSession);
+                Disposables.Add(() => hotReloadPortForwarding.Terminate());
                 MonoLauncher.InstallDev(Configuration.Device.Serial, Configuration.ProgramPath, debugSession);
 
                 var debugProcess = MonoLauncher.DebugDev(Configuration.Device.Serial, Configuration.ProgramPath, Configuration.DebugPort, Configuration.EnvironmentVariables, debugSession);
                 Disposables.Add(() => debugProcess.Terminate());
-                Disposables.Add(() => debugPortForwarding.Terminate());
-                Disposables.Add(() => hotReloadPortForwarding.Terminate());
             }
         } else {
             var debugProxyProcess = IDeviceTool.Proxy(Configuration.Device.Serial, Configuration.DebugPort, debugSession);
             Disposables.Add(() => debugProxyProcess.Terminate());
             var reloadProxyProcess = IDeviceTool.Proxy(Configuration.Device.Serial, Configuration.ReloadHostPort, debugSession);
-            Disposables.Add(() => debugProxyProcess.Terminate());
+            Disposables.Add(() => reloadProxyProcess.Terminate());
 
             IDeviceTool.Installer(Configuration.Device.Serial, Configuration.ProgramPath, debugSession);
             debugSession.OnImportantDataReceived("Application installed on device. Tap the application icon on your device to run it.");

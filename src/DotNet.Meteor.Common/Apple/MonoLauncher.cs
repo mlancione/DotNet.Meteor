@@ -7,9 +7,14 @@ public static class MonoLauncher {
     // https://github.com/xamarin/xamarin-macios/issues/21664
     public static bool UseDeviceCtl { get; set; }
 
+    private static ProcessArgumentBuilder AppleArguments() {
+        // mlaunch also accepts an explicit SDK root. Pass the scoped developer
+        // directory so its Xcode choice cannot drift from MSBuild or discovery.
+        return new ProcessArgumentBuilder().Append("--sdkroot").AppendQuoted(AppleSdkLocator.XCodePath());
+    }
     public static Process TcpTunnel(string serial, int port, IProcessLogger? logger = null) {
         FileInfo tool = AppleSdkLocator.MLaunchTool();
-        return new ProcessRunner(tool, new ProcessArgumentBuilder()
+        return new ProcessRunner(tool, AppleArguments()
             .Append($"--tcp-tunnel={port}:{port}")
             .Append($"--devname={serial}")
             .Conditional("--use-device-ctl=false", () => !MonoLauncher.UseDeviceCtl), logger)
@@ -18,7 +23,7 @@ public static class MonoLauncher {
     public static void InstallDev(string serial, string bundlePath, IProcessLogger? logger = null) {
         var tool = AppleSdkLocator.MLaunchTool();
         logger?.OnOutputDataReceived(tool.FullName);
-        new ProcessRunner(tool, new ProcessArgumentBuilder()
+        new ProcessRunner(tool, AppleArguments()
             .Append( "--installdev").AppendQuoted(bundlePath)
             .Append($"--devname={serial}")
             .Append( "--install-progress")
@@ -27,7 +32,7 @@ public static class MonoLauncher {
     }
     private static ProcessRunner LaunchDev(string serial, string bundlePath, IEnumerable<string> arguments, Dictionary<string, string> environment, IProcessLogger? logger = null) {
         var tool = AppleSdkLocator.MLaunchTool();
-        var argumentBuilder = new ProcessArgumentBuilder()
+        var argumentBuilder = AppleArguments()
             .Append( "--launchdev").AppendQuoted(bundlePath)
             .Append($"--devname={serial}")
             .Append( "--wait-for-exit");
@@ -42,7 +47,7 @@ public static class MonoLauncher {
     private static ProcessRunner LaunchSim(string serial, string bundlePath, IEnumerable<string> arguments, Dictionary<string, string> environment, IProcessLogger? logger = null) {
         var tool = AppleSdkLocator.MLaunchTool();
         logger?.OnOutputDataReceived(tool.FullName);
-        var argumentBuilder = new ProcessArgumentBuilder()
+        var argumentBuilder = AppleArguments()
             .Append( "--launchsim").AppendQuoted(bundlePath)
             .Append($"--device=:v2:udid={serial}");
 
