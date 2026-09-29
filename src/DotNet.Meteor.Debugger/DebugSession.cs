@@ -114,9 +114,9 @@ public class DebugSession : Session {
             var dotnetSdkVersion = properties.TryGetValue("dotnetSdkVersion").ToClass<string>() ?? "unknown";
             var targetFramework = properties.TryGetValue("targetFramework").ToClass<string>() ?? "unknown";
             var toolWorkingDirectory = properties.TryGetValue("toolWorkingDirectory").ToClass<string>() ?? Environment.CurrentDirectory;
-            OnImportantDataReceived($"Launch context: dotnet={dotnetExecutable}; SDK={dotnetSdkVersion}; target={targetFramework}; cwd={toolWorkingDirectory}");
-            OnImportantDataReceived($"Apple tools: DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT")}; DEVELOPER_DIR={Environment.GetEnvironmentVariable("DEVELOPER_DIR")}; MLAUNCH_PATH={Environment.GetEnvironmentVariable("MLAUNCH_PATH")}");
-            OnImportantDataReceived($"Device: {configuration.Device.Name}; identifier={configuration.Device.Serial}; RID={configuration.Device.RuntimeId}; program={configuration.ProgramPath}");
+            OnDebugDataReceived($"Launch context: dotnet={dotnetExecutable}; SDK={dotnetSdkVersion}; target={targetFramework}; cwd={toolWorkingDirectory}");
+            OnDebugDataReceived($"Apple tools: DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT")}; DEVELOPER_DIR={Environment.GetEnvironmentVariable("DEVELOPER_DIR")}; MLAUNCH_PATH={Environment.GetEnvironmentVariable("MLAUNCH_PATH")}");
+            OnDebugDataReceived($"Device: {configuration.Device.Name}; identifier={configuration.Device.Serial}; RID={configuration.Device.RuntimeId}; program={configuration.ProgramPath}");
 
             launchAgent = configuration.GetLaunchAgent();
             try {
