@@ -10,6 +10,8 @@ namespace DotNet.Meteor.Debugger;
 
 public class DebugSession : Session {
     private BaseLaunchAgent launchAgent = null!;
+    private int terminated;
+    private readonly object launchCleanupGate = new object();
 
     private readonly Handles<MonoClient.StackFrame> frameHandles = new Handles<MonoClient.StackFrame>();
     private readonly Handles<MonoClient.SourceLocation> gotoHandles = new Handles<MonoClient.SourceLocation>();
@@ -37,7 +39,47 @@ public class DebugSession : Session {
         session.Breakpoints.BreakpointStatusChanged += BreakpointStatusChanged;
     }
 
-    protected override void OnUnhandledException(Exception ex) => launchAgent?.Dispose();
+    protected override void OnUnhandledException(Exception ex) {
+        CompleteLaunch();
+        session.Dispose();
+        DisposeLaunch();
+    }
+
+    internal void FailLaunch(string message) {
+        if (Interlocked.Exchange(ref terminated, 1) != 0) {
+            return;
+        }
+        CompleteLaunch();
+        try {
+            OnErrorDataReceived(message);
+        } finally {
+            // Exit queues cancellation behind Run; Dispose also cancels an active listener.
+            // Both use Mono's existing EndLaunch/CancelConnect lifecycle.
+            session.Exit();
+            session.Dispose();
+            DisposeLaunch();
+            Protocol.SendEvent(new TerminatedEvent());
+        }
+    }
+
+    private void DisposeLaunch() {
+        lock (launchCleanupGate) {
+            CompleteLaunch();
+            launchAgent?.Dispose();
+        }
+    }
+
+    private void CompleteLaunch() {
+        if (launchAgent is DebugLaunchAgent debugLaunchAgent) {
+            debugLaunchAgent.CompleteLaunch();
+        }
+    }
+
+    private void SendTerminated() {
+        if (Interlocked.Exchange(ref terminated, 1) == 0) {
+            Protocol.SendEvent(new TerminatedEvent());
+        }
+    }
 
     #region Initialize
     protected override InitializeResponse HandleInitializeRequest(InitializeArguments arguments) {
@@ -67,29 +109,48 @@ public class DebugSession : Session {
             var configuration = new LaunchConfiguration(arguments.ConfigurationProperties);
             SymbolServerExtensions.SetEventLogger(OnDebugDataReceived);
 
+            var properties = arguments.ConfigurationProperties;
+            var dotnetExecutable = properties.TryGetValue("dotnetExecutable").ToClass<string>() ?? "dotnet";
+            var dotnetSdkVersion = properties.TryGetValue("dotnetSdkVersion").ToClass<string>() ?? "unknown";
+            var targetFramework = properties.TryGetValue("targetFramework").ToClass<string>() ?? "unknown";
+            var toolWorkingDirectory = properties.TryGetValue("toolWorkingDirectory").ToClass<string>() ?? Environment.CurrentDirectory;
+            OnImportantDataReceived($"Launch context: dotnet={dotnetExecutable}; SDK={dotnetSdkVersion}; target={targetFramework}; cwd={toolWorkingDirectory}");
+            OnImportantDataReceived($"Apple tools: DOTNET_ROOT={Environment.GetEnvironmentVariable("DOTNET_ROOT")}; DEVELOPER_DIR={Environment.GetEnvironmentVariable("DEVELOPER_DIR")}; MLAUNCH_PATH={Environment.GetEnvironmentVariable("MLAUNCH_PATH")}");
+            OnImportantDataReceived($"Device: {configuration.Device.Name}; identifier={configuration.Device.Serial}; RID={configuration.Device.RuntimeId}; program={configuration.ProgramPath}");
+
             launchAgent = configuration.GetLaunchAgent();
-            launchAgent.Launch(this);
-            launchAgent.Connect(session);
-            return new LaunchResponse();
+            try {
+                launchAgent.Launch(this);
+                launchAgent.Connect(session);
+                return new LaunchResponse();
+            } catch {
+                session.Dispose();
+                DisposeLaunch();
+                throw;
+            }
         });
     }
     #endregion Launch
     #region Terminate
     protected override TerminateResponse HandleTerminateRequest(TerminateArguments arguments) {
-        if (!session.HasExited)
+        CompleteLaunch();
+        if (!session.HasExited) {
             session.Exit();
+        }
 
-        launchAgent?.Dispose();
-        if (launchAgent is not DebugLaunchAgent)
-            Protocol.SendEvent(new TerminatedEvent());
+        DisposeLaunch();
+        if (launchAgent is not DebugLaunchAgent) {
+            SendTerminated();
+        }
 
         return new TerminateResponse();
     }
     #endregion Terminate
     #region Disconnect
     protected override DisconnectResponse HandleDisconnectRequest(DisconnectArguments arguments) {
+        CompleteLaunch();
         session.Dispose();
-        launchAgent?.Dispose();
+        DisposeLaunch();
         return new DisconnectResponse();
     }
     #endregion Disconnect
@@ -546,10 +607,14 @@ public class DebugSession : Session {
         });
     }
     private void TargetReady(object? sender, MonoClient.TargetEventArgs e) {
-        Protocol.SendEvent(new InitializedEvent());
+        CompleteLaunch();
+        if (Volatile.Read(ref terminated) == 0) {
+            Protocol.SendEvent(new InitializedEvent());
+        }
     }
     private void TargetExited(object? sender, MonoClient.TargetEventArgs e) {
-        Protocol.SendEvent(new TerminatedEvent());
+        CompleteLaunch();
+        SendTerminated();
     }
     private void TargetThreadStarted(object? sender, MonoClient.TargetEventArgs e) {
         int tid = (int)e.Thread.Id;

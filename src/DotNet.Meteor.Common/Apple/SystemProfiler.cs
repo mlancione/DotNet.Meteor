@@ -10,13 +10,19 @@ public static class SystemProfiler {
 
         ProcessResult result = new ProcessRunner(profiler, new ProcessArgumentBuilder()
             .Append("SPUSBDataType"))
-            .WaitForExit();
+            .WaitForExit(15000);
 
+        if (!result.Success) {
+            throw new InvalidOperationException(result.GetError());
+        }
         var output = string.Join(Environment.NewLine, result.StandardOutput);
         if (string.IsNullOrWhiteSpace(output)) {
             result = new ProcessRunner(profiler, new ProcessArgumentBuilder()
                 .Append("SPUSBHostDataType"))
-                .WaitForExit();
+                .WaitForExit(15000);
+            if (!result.Success) {
+                throw new InvalidOperationException(result.GetError());
+            }
             output = string.Join(Environment.NewLine, result.StandardOutput);
         }
 

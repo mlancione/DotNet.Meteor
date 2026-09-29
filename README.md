@@ -134,13 +134,23 @@ Conversion complete
 
 ## Troubleshooting
 
-&emsp;**.NET Meteor** creates log files in the `~/.vscode/extensions/dotnet-meteor-*/extension/bin` folder. You can find the following logs:
-- `Workspace/Logs` - logs from the current workspace.
-- `Xaml/Logs` - logs from the XAML IntelliSense server.
-- `HotReload/Logs` - logs from the Hot Reload server.
-- `Debugger/Logs` - log from the debugger and profiler.
+Meteor's workspace, debugger and Hot Reload logs are under the installed extension's `extension/bin/<component>/logs/<UTC timestamp>-<process id>/` directory. Each process writes `Debug.log` and `Error.log`, preserving earlier runs. Older inactive directories are pruned after seven days or when more than thirty are retained; runs from the last 24 hours and live processes are kept. XAML server logs remain under `extension/bin/Xaml/Logs`.
 
-If checking the logs didn’t solve the issue, please open a new issue in this GitHub repository. Be sure to include a description of the problem along with the log files.
+Debugger logs record the selected dotnet executable and SDK version, target framework, working directory, Xcode developer directory, mlaunch path, and device identifier. Include the relevant process directory when reporting a launch failure.
+
+### Apple SDK and simulator selection
+
+Build tasks and MSBuild property queries use the dotnet executable found on VS Code's `PATH`, with the project directory as their working directory so `global.json` applies. Set `dotnetMeteor.dotnetPath` to an absolute executable path to select another installation. The debugger inherits that installation's `DOTNET_ROOT` for Apple tool resolution.
+
+Meteor evaluates the selected project's `MlaunchPath` / `_MlaunchPath` and `XcodeLocation` using its active configuration, target framework and runtime identifier. A `MLAUNCH_PATH` environment override takes precedence; an invalid override produces an error. If the project provides no launcher path, Meteor searches matching framework packs by numeric SDK and workload version, skipping incomplete installations and retaining support for legacy packs. For example, `net10.0-ios` selects a .NET 10 launcher rather than a lexically higher `net9.0` pack.
+
+Xcode selection uses the project's `XcodeLocation`, then `DEVELOPER_DIR` / `MD_APPLE_SDK_ROOT`, then `xcode-select -p`. Launch tools receive the same developer directory used by the build. Use the iOS workload compatible with the selected Xcode; Xcode 27 requires a launcher that understands DeviceHub.
+
+Simulator discovery uses `simctl` JSON and preserves device UDIDs, excluding unavailable runtimes. Device queries are scoped to the selected platform, share concurrent requests and cache successful results for 30 seconds. Reopen the device picker after that interval to see newly connected devices. Android, Apple physical and Apple simulator queries have independent failure handling and bounded subprocesses.
+
+A simulator debug launch fails immediately if mlaunch exits unsuccessfully before attachment, or after 120 seconds without Mono `TargetReady`. Stopping or disconnecting cancels the deadline and cleans up Meteor's listener, launcher and tunnels.
+
+If checking the logs didn’t solve the issue, please open an issue in this fork with a description and the relevant logs.
 
 &emsp;**.NET Meteor** uses the `.NET Diagnostics` tools to profile applications. If you encounter any issues, please check the following:
 

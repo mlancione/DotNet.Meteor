@@ -1,3 +1,4 @@
+import { Interop } from '../interop/interop';
 import { ProcessArgumentBuilder } from '../interop/processArgumentBuilder';
 import { ConfigurationController } from '../controllers/configurationController';
 import { RemoteHostProvider } from '../features/removeHostProvider';
@@ -14,7 +15,8 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
     }
 
     private getTask(definition: vscode.TaskDefinition): vscode.Task {
-        const builder = new ProcessArgumentBuilder('dotnet')
+        const context = Interop.getProjectToolContext(ConfigurationController.project!, ConfigurationController.configuration!, ConfigurationController.device!);
+        const builder = new ProcessArgumentBuilder(context.executable)
             .append('build')
             .append(ConfigurationController.project!.path)
             .append(`-p:Configuration=${ConfigurationController.configuration}`)
@@ -50,7 +52,7 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
         const task = new vscode.Task(
             definition, vscode.TaskScope.Workspace,
             res.taskDefinitionDefaultTargetCapitalized, res.extensionId,
-            new vscode.ShellExecution(builder.getCommand(), builder.getArguments()), `$${res.taskProblemMatcherId}`
+            new vscode.ShellExecution(builder.getCommand(), builder.getArguments(), { cwd: context.cwd, env: context.env as Record<string, string> }), `$${res.taskProblemMatcherId}`
         );
         
         if (ConfigurationController.isAppleMobile() && ConfigurationController.onWindows)

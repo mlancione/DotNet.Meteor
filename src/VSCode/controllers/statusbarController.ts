@@ -16,6 +16,8 @@ export class StatusBarController {
     private static targetStatusItem: vscode.StatusBarItem | undefined;
     private static deviceStatusItem: vscode.StatusBarItem | undefined;
 
+    private static deviceRefresh = 0;
+    private static projectRefresh = 0;
     public static projects: Project[] = [];
     public static devices: Device[] = [];
 
@@ -35,8 +37,7 @@ export class StatusBarController {
                 StatusBarController.updateProjectStatusBarItem();
         }));
 
-        await StatusBarController.updateDeviceStatusBarItem();
-        await StatusBarController.updateProjectStatusBarItem();
+        await Promise.all([StatusBarController.updateDeviceStatusBarItem(), StatusBarController.updateProjectStatusBarItem()]);
     }
     public static async activateWithDotRush(context: vscode.ExtensionContext): Promise<void> {
         const exports = await vscode.extensions.getExtension(res.dotrushExtensionId)?.activate();
@@ -70,8 +71,20 @@ export class StatusBarController {
         if (StatusBarController.projectStatusItem === undefined)
             return;
 
+        const refresh = ++StatusBarController.projectRefresh;
         const folders = (vscode.workspace.workspaceFolders ?? []).map(it => it.uri.fsPath);
-        StatusBarController.projects = await Interop.getProjects(folders);
+        let projects: Project[];
+        try {
+            projects = await Interop.getProjects(folders);
+        } catch (error) {
+            console.error(error);
+            vscode.window.showErrorMessage(`.NET Meteor project discovery failed: ${String(error)}`);
+            return;
+        }
+        if (refresh !== StatusBarController.projectRefresh) {
+            return;
+        }
+        StatusBarController.projects = projects;
         if (StatusBarController.projects.length === 0)
             return StatusBarController.projectStatusItem.hide();
 
@@ -96,11 +109,20 @@ export class StatusBarController {
         if (StatusBarController.deviceStatusItem === undefined)
             return;
 
-        StatusBarController.devices = await Interop.getDevices();
-        if (StatusBarController.devices.length === 0)
-            return StatusBarController.deviceStatusItem.hide();
-
-        StatusBarController.restoreDevice();
+        const refresh = ++StatusBarController.deviceRefresh;
+        const framework = ConfigurationController.getTargetFramework();
+        const platform = framework?.match(/-([a-z]+)/i)?.[1]?.toLowerCase() ?? '';
+        try {
+            const devices = await Interop.getDevices(platform, StatusBarController.getDeviceToolContext());
+            if (refresh !== StatusBarController.deviceRefresh) {
+                return;
+            }
+            StatusBarController.mergeDevices(devices, platform);
+            StatusBarController.restoreDevice();
+        } catch (error) {
+            console.error(error);
+            vscode.window.showErrorMessage(`.NET Meteor device discovery failed: ${String(error)}`);
+        }
     }
 
     public static performSelectProject(item: Project | undefined = undefined) {
@@ -115,6 +137,7 @@ export class StatusBarController {
         StatusBarController.performSelectConfiguration(StateController.getConfiguration());
         StateController.saveFramework();
         StatusBarController.restoreDevice();
+        void StatusBarController.updateDeviceStatusBarItem();
     }
     public static performSelectConfiguration(item: string | undefined = undefined) {
         const configurations = ConfigurationController.project?.configurations ?? [];
@@ -130,6 +153,20 @@ export class StatusBarController {
         StateController.saveFramework();
         StatusBarController.performSelectConfiguration(ConfigurationController.configuration);
         StatusBarController.restoreDevice();
+        void StatusBarController.updateDeviceStatusBarItem();
+    }
+    private static getDeviceToolContext() {
+        const project = ConfigurationController.project;
+        const configuration = ConfigurationController.configuration;
+        const device = ConfigurationController.device;
+        if (project && configuration) {
+            return Interop.getProjectToolContext(project, configuration, device);
+        }
+        return project ? Interop.getToolContext(project) : undefined;
+    }
+    private static mergeDevices(devices: Device[], platform: string) {
+        StatusBarController.devices = platform
+            ? [...StatusBarController.devices.filter(device => device.platform !== platform), ...devices] : devices;
     }
     private static restoreDevice() {
         const framework = ConfigurationController.getTargetFramework();
@@ -177,7 +214,11 @@ export class StatusBarController {
         picker.matchOnDetail = true;
         picker.busy = true;
         picker.show();
-        picker.onDidHide(() => picker.dispose());
+        let hidden = false;
+        picker.onDidHide(() => {
+            hidden = true;
+            picker.dispose();
+        });
         picker.onDidAccept(() => {
             if (picker.selectedItems.length > 0) {
                 const selectedItem = (picker.selectedItems[0] as DeviceItem).item;
@@ -186,9 +227,25 @@ export class StatusBarController {
             picker.hide();
         });
 
-        StatusBarController.devices = await Interop.getDevices();
-
-        const devices = StatusBarController.devices.filter(device => supportsFramework(device, ConfigurationController.getTargetFramework()));
+        const framework = ConfigurationController.getTargetFramework();
+        const platform = framework?.match(/-([a-z]+)/i)?.[1]?.toLowerCase() ?? '';
+        try {
+            const discovered = await Interop.getDevices(platform, StatusBarController.getDeviceToolContext());
+            if (hidden || framework !== ConfigurationController.getTargetFramework()) {
+                if (!hidden) {
+                    picker.hide();
+                }
+                return;
+            }
+            StatusBarController.mergeDevices(discovered, platform);
+        } catch (error) {
+            if (!hidden) {
+                picker.hide();
+                vscode.window.showErrorMessage(`.NET Meteor device discovery failed: ${String(error)}`);
+            }
+            return;
+        }
+        const devices = StatusBarController.devices.filter(device => supportsFramework(device, framework));
         StatusBarController.restoreDevice();
         const items: vscode.QuickPickItem[] = [];
         for (let i of devices.keys()) {

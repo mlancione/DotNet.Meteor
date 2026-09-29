@@ -6,10 +6,20 @@ namespace DotNet.Meteor.Common.Apple;
 
 public static class AppleSdkLocator {
     public static string XCodePath() {
+        var configured = Environment.GetEnvironmentVariable("DEVELOPER_DIR")
+            ?? Environment.GetEnvironmentVariable("MD_APPLE_SDK_ROOT");
+        if (!string.IsNullOrEmpty(configured)) {
+            var developer = configured.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
+                ? Path.Combine(configured, "Contents", "Developer") : configured;
+            if (!Directory.Exists(developer)) {
+                throw new DirectoryNotFoundException($"Configured Xcode directory does not exist: {developer}");
+            }
+            return developer;
+        }
         var selector = new FileInfo(Path.Combine("/usr", "bin", "xcode-select"));
         var result = new ProcessRunner(selector, new ProcessArgumentBuilder()
             .Append("-p"))
-            .WaitForExit();
+            .WaitForExit(10000);
 
         var path = string.Join(Environment.NewLine, result.StandardOutput)?.Trim();
 
@@ -45,7 +55,7 @@ public static class AppleSdkLocator {
 
         var result = new ProcessRunner("dotnet" + RuntimeSystem.ExecExtension, new ProcessArgumentBuilder()
             .Append("--list-sdks"))
-            .WaitForExit();
+            .WaitForExit(10000);
 
         if (!result.Success)
             throw new FileNotFoundException("Could not find dotnet tool");
@@ -66,23 +76,8 @@ public static class AppleSdkLocator {
         if (RuntimeSystem.IsLinux)
             return Path.Combine("/usr", "bin"); // There is no 'Microsoft.iOS.Linux.Sdk' workload
 
-        var sdkPath = string.Empty;
-        var dotnetPacksPath = Path.Combine(AppleSdkLocator.DotNetRootLocation(), "packs");
-        var sdkPaths = Directory.GetDirectories(dotnetPacksPath, "Microsoft.iOS.Windows.Sdk.net*");
-        
-        if (sdkPaths.Length > 0)
-            sdkPath = sdkPaths.OrderByDescending(x => Path.GetFileName(x)).First();
-        if (string.IsNullOrEmpty(sdkPath))
-            sdkPath = Path.Combine(dotnetPacksPath, "Microsoft.iOS.Windows.Sdk");
-        if (!Directory.Exists(sdkPath))
-            throw new DirectoryNotFoundException("Could not find idevice tool");
+        return FindInstalledTool("Microsoft.iOS.Windows.Sdk", "tools/msbuild/iOS/imobiledevice-x64", null, true);
 
-        var toolLocations = Directory.GetDirectories(sdkPath);
-        if (toolLocations.Length == 0)
-            throw new FileNotFoundException("Could not find idevice tool");
-
-        var latestToolDirectory = toolLocations.OrderByDescending(x => Path.GetFileName(x)).First();
-        return Path.Combine(latestToolDirectory, "tools", "msbuild", "iOS", "imobiledevice-x64");
     }
     public static bool IsAppleDriverRunning() {
         if (RuntimeSystem.IsMacOS)
@@ -105,29 +100,60 @@ public static class AppleSdkLocator {
 
         return tool;
     }
-    public static FileInfo MLaunchTool() {
+    public static FileInfo MLaunchTool(string? targetFramework = null) {
         var mlaunchToolPath = Environment.GetEnvironmentVariable("MLAUNCH_PATH");
-        if (File.Exists(mlaunchToolPath))
+        if (!string.IsNullOrEmpty(mlaunchToolPath)) {
+            if (!File.Exists(mlaunchToolPath)) {
+                throw new FileNotFoundException("Configured MLAUNCH_PATH does not exist", mlaunchToolPath);
+            }
             return new FileInfo(mlaunchToolPath);
+        }
 
-        var sdkPath = string.Empty;
-        var dotnetPacksPath = Path.Combine(AppleSdkLocator.DotNetRootLocation(), "packs");
-        var sdkPaths = Directory.GetDirectories(dotnetPacksPath, "Microsoft.iOS.Sdk.net*");
-        
-        if (sdkPaths.Length > 0)
-            sdkPath = sdkPaths.OrderByDescending(x => Path.GetFileName(x)).First();
-        if (string.IsNullOrEmpty(sdkPath))
-            sdkPath = Path.Combine(dotnetPacksPath, "Microsoft.iOS.Sdk");
-        if (!Directory.Exists(sdkPath))
-            throw new DirectoryNotFoundException("Could not find mlaunch tool");
+        targetFramework ??= Environment.GetEnvironmentVariable("METEOR_TARGET_FRAMEWORK");
+        return new FileInfo(FindInstalledTool("Microsoft.iOS.Sdk", "tools/bin/mlaunch", targetFramework));
+    }
 
-        var toolLocations = Directory.GetDirectories(sdkPath);
-        if (toolLocations.Length == 0)
-            throw new FileNotFoundException("Could not find mlaunch tool");
+    private static string FindInstalledTool(string sdkName, string relativePath, string? targetFramework, bool directory = false) {
+        var packs = Path.Combine(DotNetRootLocation(), "packs");
+        var frameworkVersion = Regex.Match(targetFramework ?? string.Empty, @"^net(\d+\.\d+)(?:-|$)").Groups[1].Value;
+        var prefix = string.IsNullOrEmpty(frameworkVersion) ? $"{sdkName}.net" : $"{sdkName}.net{frameworkVersion}_";
+        var bands = Directory.Exists(packs)
+            ? Directory.GetDirectories(packs).Where(p => Path.GetFileName(p).StartsWith(prefix, StringComparison.Ordinal))
+                .OrderByDescending(p => Path.GetFileName(p), NumericVersionComparer.Instance).ToList()
+            : new List<string>();
+        // Legacy packs are used only after all matching framework-specific packs.
+        var legacy = Path.Combine(packs, sdkName);
+        if (Directory.Exists(legacy)) {
+            bands.Add(legacy);
+        }
+        foreach (var band in bands) {
+            foreach (var version in Directory.GetDirectories(band)
+                .OrderByDescending(p => Path.GetFileName(p), NumericVersionComparer.Instance)) {
+                var tool = Path.Combine(version, relativePath);
+                if (directory ? Directory.Exists(tool) : File.Exists(tool)) {
+                    return tool;
+                }
+            }
+        }
+        throw new FileNotFoundException($"Could not find {relativePath} for '{targetFramework ?? "installed SDKs"}' in {packs}");
+    }
 
-        var latestToolDirectory = toolLocations.OrderByDescending(x => Path.GetFileName(x)).First();
-        mlaunchToolPath = Path.Combine(latestToolDirectory, "tools", "bin", "mlaunch");
-        return new FileInfo(mlaunchToolPath);
+    private sealed class NumericVersionComparer : IComparer<string> {
+        public static readonly NumericVersionComparer Instance = new();
+        public int Compare(string? x, string? y) {
+            var left = Regex.Matches((x ?? string.Empty).Split('-')[0], @"\d+").Select(m => int.Parse(m.Value)).ToArray();
+            var right = Regex.Matches((y ?? string.Empty).Split('-')[0], @"\d+").Select(m => int.Parse(m.Value)).ToArray();
+            for (var i = 0; i < Math.Max(left.Length, right.Length); i++) {
+                var comparison = (i < left.Length ? left[i] : 0).CompareTo(i < right.Length ? right[i] : 0);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            // A stable version sorts after the corresponding prerelease.
+            var leftPrerelease = (x ?? string.Empty).Contains('-');
+            var rightPrerelease = (y ?? string.Empty).Contains('-');
+            return leftPrerelease == rightPrerelease ? StringComparer.Ordinal.Compare(x, y) : leftPrerelease ? -1 : 1;
+        }
     }
     public static FileInfo XCRunTool() {
         string path = Path.Combine("/usr", "bin", "xcrun");

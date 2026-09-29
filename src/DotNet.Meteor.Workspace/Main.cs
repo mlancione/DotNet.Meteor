@@ -1,4 +1,4 @@
-﻿using DotNet.Meteor.Common;
+using DotNet.Meteor.Common;
 using DotNet.Meteor.Common.Android;
 using NLog;
 using System.Reflection;
@@ -24,8 +24,14 @@ public class Program {
         }
 
         LogConfig.InitializeLog();
-        if (CommandHandler.TryGetValue(args[0], out var command))
-            command.Invoke(args);
+        try {
+            if (CommandHandler.TryGetValue(args[0], out var command)) {
+                command.Invoke(args);
+            }
+        } finally {
+            // Short-lived discovery processes must flush their asynchronous diagnostics.
+            LogManager.Shutdown();
+        }
     }
     public static void Help(string[] args) {
         var version = Assembly.GetExecutingAssembly().GetName().Version;
@@ -39,7 +45,7 @@ public class Program {
     }
 
     public static void AllDevices(string[] args) {
-        var devices = DeviceProvider.GetDevices(logger.Error, logger.Debug);
+        var devices = DeviceProvider.GetDevices(logger.Error, logger.Debug, args.Length > 1 ? args[1].ToLowerInvariant() : null);
         Console.WriteLine(JsonSerializer.Serialize(devices, TrimmableContext.Default.ListDeviceData));
     }
     public static void AndroidSdkPath(string[] args) {

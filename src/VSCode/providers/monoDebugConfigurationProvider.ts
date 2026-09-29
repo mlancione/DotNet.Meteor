@@ -1,3 +1,6 @@
+import { ProcessRunner } from '../interop/processRunner';
+import { ProcessArgumentBuilder } from '../interop/processArgumentBuilder';
+import { Interop } from '../interop/interop';
 import { ConfigurationController } from '../controllers/configurationController';
 import { ExternalTypeResolver } from '../features/externalTypeResolver';
 import * as res from '../resources/constants';
@@ -45,6 +48,12 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
 			return ConfigurationController.getVsdbgOptions(config);
 		}
 
+        const tools = Interop.getProjectToolContext(config.project, config.configuration, config.device);
+        config.toolEnvironment = tools.env;
+        config.toolWorkingDirectory = tools.cwd;
+        config.dotnetExecutable = tools.executable;
+        config.dotnetSdkVersion = ProcessRunner.runSync(new ProcessArgumentBuilder(tools.executable).append('--version'), tools);
+        config.targetFramework = ConfigurationController.getTargetFramework();
 		config.transportId = ExternalTypeResolver.feature.transportId;
 		config.skipDebug = ConfigurationController.noDebug;
 		config.debuggingPort = ConfigurationController.getDebuggingPort();
