@@ -145,6 +145,11 @@ jobs:
       - name: Restore .NET tools
         run: dotnet tool restore
 
+      - name: Initialize CoreSimulator
+        # The first simctl call can start services on a fresh hosted runner.
+        # Warm them before testing Meteor's bounded device-discovery request.
+        run: xcrun simctl list devices available --json > /dev/null
+
       - name: Run tests
         id: tests
         shell: bash
