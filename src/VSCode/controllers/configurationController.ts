@@ -1,4 +1,4 @@
-import { Interop } from '../interop/interop';
+import { Interop, RuntimeBuildContext } from '../interop/interop';
 import { StatusBarController } from "./statusbarController";
 import { Project } from '../models/project';
 import { Device } from '../models/device';
@@ -77,7 +77,7 @@ export class ConfigurationController {
 
         if (ConfigurationController.isAppleMobile() && !ConfigurationController.device?.is_emulator)
             return ConfigurationController.onMac
-                ? ConfigurationController.getSetting(res.configIdMonoSdbDebuggerPortApple, res.configDefaultMonoSdbDebuggerPortApple) 
+                ? ConfigurationController.getSetting(res.configIdMonoSdbDebuggerPortApple, res.configDefaultMonoSdbDebuggerPortApple)
                 : 10000; /* We can't specify the port on Windows or Linux, so we use the default one */
 
         return 0;
@@ -150,8 +150,8 @@ export class ConfigurationController {
     public static getSettingOrDefault<TResult>(id: string): TResult | undefined {
         return vscode.workspace.getConfiguration(res.configId).get(id);
     }
-    public static getProgramPath(project: Project, configuration: string, device: Device): string | undefined {
-        const targetPath = Interop.getPropertyValue('TargetPath', project, configuration, device);
+    public static getProgramPath(project: Project, configuration: string, device: Device, build?: RuntimeBuildContext): string | undefined {
+        const targetPath = Interop.getPropertyValue('TargetPath', project, configuration, device, build);
         if (targetPath === undefined)
             return undefined;
 
@@ -163,13 +163,13 @@ export class ConfigurationController {
         }
         if (ConfigurationController.isAndroid()) {
             const outDir = path.dirname(targetPath);
-            const packageName = Interop.getPropertyValue('ApplicationId', project, configuration, device);
+            const packageName = Interop.getPropertyValue('ApplicationId', project, configuration, device, build);
             if (packageName !== undefined)
                 return path.join(outDir, packageName + '-Signed.apk');
         }
         if (ConfigurationController.isAppleMobile() || ConfigurationController.isMacCatalyst()) {
             const outDir = path.dirname(targetPath);
-            const bundleName = Interop.getPropertyValue('_AppBundleName', project, configuration, device);
+            const bundleName = Interop.getPropertyValue('_AppBundleName', project, configuration, device, build);
             const bundleExt = ConfigurationController.onMac ? '.app' : '.ipa';
             if (bundleName !== undefined)
                 return path.join(outDir, bundleName + bundleExt);
@@ -177,11 +177,11 @@ export class ConfigurationController {
 
         return targetPath;
     }
-    public static getAssetsPath(project: Project, configuration: string, device: Device): string | undefined {
+    public static getAssetsPath(project: Project, configuration: string, device: Device, build?: RuntimeBuildContext): string | undefined {
         if (!ConfigurationController.isAndroid())
             return undefined;
 
-        const assembliesDir = Interop.getPropertyValue('MonoAndroidIntermediateAssemblyDir', project, configuration, device);
+        const assembliesDir = Interop.getPropertyValue('MonoAndroidIntermediateAssemblyDir', project, configuration, device, build);
         return assembliesDir;
     }
-} 
+}

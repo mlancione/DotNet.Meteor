@@ -29,6 +29,21 @@ for path in args.files:
         debugger = manifest["contributes"]["debuggers"][0]
         program = debugger["windows"]["program"] if target.startswith("win32-") else debugger["program"]
         archive.getinfo("extension/" + program.removeprefix("./"))
+        coreclr_dir = "extension/extension/bin/CoreClr/"
+        archive.getinfo(coreclr_dir + ("clrdbg.exe" if target.startswith("win32-") else "clrdbg"))
+        archive.getinfo(coreclr_dir + "clrdbg.dll")
+        archive.getinfo(coreclr_dir + "LICENSE.txt")
+        backend = json.loads(archive.read(coreclr_dir + "upstream.json"))
+        assert backend["version"] == "18.0.0", path
+        archive.getinfo("extension/extension/CoreClr.targets")
+        archive.getinfo("extension/extension/CoreClr.props")
+        archive.getinfo("extension/extension/coreclr-adapter.cjs")
+        host_os, arch = target.split("-", 1)
+        host_os = {"darwin": "osx", "win32": "win"}.get(host_os, host_os)
+        host_lib = "remotecoreclrhost.dll" if host_os == "win" else "libremotecoreclrhost." + ("dylib" if host_os == "osx" else "so")
+        archive.getinfo(f"extension/extension/bin/Remote/remote-host/{host_os}-{arch}/{host_lib}")
+        for rid in ("ios-arm64", "iossimulator-arm64", "iossimulator-x64"):
+            archive.getinfo(f"extension/extension/bin/Remote/remote-target/ios/{rid}/libremotecoreclrtarget.dylib")
         archive.getinfo("extension/extension/extension.js")
         print(f"Verified {path}: {manifest['publisher']}.{manifest['name']} {args.version} ({target})")
 if args.all_targets:

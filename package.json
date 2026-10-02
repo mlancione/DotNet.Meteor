@@ -1,7 +1,7 @@
 {
   "name": "dotnet-meteor-local",
   "publisher": "localdev",
-  "version": "6.2.14",
+  "version": "6.3.0",
   "description": "Run and Debug .NET Apps (MAUI, Avalonia, Xamarin.Native)",
   "displayName": ".NET Meteor (Local)",
   "author": "Nikita Romanov",
@@ -70,6 +70,11 @@
         "command": "dotnet-meteor.selectActiveConfiguration",
         "category": "%extension.displayName%",
         "title": "%command.title.selectActiveConfiguration%"
+      },
+      {
+        "command": "dotnet-meteor.selectRuntime",
+        "category": "%extension.displayName%",
+        "title": "Select runtime (Mono / CoreCLR)"
       },
       {
         "command": "dotnet-meteor.selectActiveDevice",
@@ -267,6 +272,57 @@
             "type": "string",
             "default": "",
             "description": "Absolute path to the dotnet executable used for project builds, property evaluation and Apple launch tools. Defaults to dotnet on VS Code\u2019s PATH."
+          },
+          "dotnetMeteor.runtime": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mono",
+              "coreclr"
+            ],
+            "default": "auto",
+            "scope": "application",
+            "enumDescriptions": [
+              "Follow the project and SDK runtime.",
+              "Use Mono and the existing Meteor debugger.",
+              "Use CoreCLR and the experimental debugger. iOS and Mac Catalyst require .NET 11+."
+            ],
+            "description": "Global runtime selection for Meteor mobile builds and debugging. Also available in the status bar. Does not change project target frameworks or bypass Xcode compatibility checks."
+          },
+          "dotnetMeteor.coreClrDotnetPath": {
+            "type": "string",
+            "default": "",
+            "scope": "application",
+            "description": "Optional absolute path to a separate dotnet installation used when CoreCLR is explicitly selected. Leave empty to use dotnetMeteor.dotnetPath or PATH. SDK selection still respects global.json."
+          },
+          "dotnetMeteor.coreClrDebuggerPort": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 65535,
+            "scope": "application",
+            "description": "Experimental CoreCLR debugger port. Zero selects an available port automatically."
+          },
+          "dotnetMeteor.coreClrReadyToRun": {
+            "type": "string",
+            "enum": [
+              "default",
+              "disabled",
+              "enabled"
+            ],
+            "enumItemLabels": [
+              "Default",
+              "Disabled",
+              "Enabled"
+            ],
+            "enumDescriptions": [
+              "Follow the project and SDK ReadyToRun setting.",
+              "Disable ReadyToRun for Meteor CoreCLR builds and debugging. Recommended until the workload's debugger compatibility is verified.",
+              "Enable ReadyToRun for Meteor CoreCLR builds and debugging. Some preview workloads crash when debugging ReadyToRun apps."
+            ],
+            "default": "disabled",
+            "scope": "application",
+            "description": "Global ReadyToRun override for experimental CoreCLR sessions, including the matching build and property queries. Disabled by default because .NET 11 RC1 reports a debugger incompatibility. Does not affect Mono builds or builds/publishing outside Meteor."
           }
         }
       },
