@@ -1,0 +1,10 @@
+<Project>
+    <Import Project="$(MeteorOriginalBeforeProps)"
+            Condition="'$(MeteorOriginalBeforeProps)' != '' and Exists('$(MeteorOriginalBeforeProps)')" />
+    <PropertyGroup>
+        <!-- Changing BaseIntermediateOutputPath must not expose old obj/bin files
+             to the SDK's default source and resource globs. Set this before those
+             items are evaluated, while retaining the project's other exclusions. -->
+        <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
+    </PropertyGroup>
+</Project>

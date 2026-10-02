@@ -10,15 +10,33 @@ To build and publish all six packages:
 
 ```sh
 gh workflow run ci.yml --repo mlancione/DotNet.Meteor \
-  --ref ci/fork-github-actions-vsix \
-  -f release_version=6.2.12 -f publish_release=true
+  --ref main \
+  -f release_version=6.3.0 -f publish_release=true
 ```
 
 Use a new numeric version for changed source. Set `publish_release=false` for artifact-only builds. Successful release builds create `local-v<VERSION>` at the exact built commit and attach Linux, macOS and Windows x64/ARM64 VSIX files. Tag pushes matching `local-v*` also publish releases. The GitHub workflow does not publish to the VS Code Marketplace.
 
 Build tooling uses the Node version in `.nvmrc`, locked npm dependencies, and project-local `@vscode/vsce` (no global packaging tools needed). Run `npm ci`, `npm run typecheck`, `npm test`, and `npm run package` for extension checks.
 
-The original documentation follows; debugging and profiling remain based on the Meteor 6.x architecture.
+Click the runtime item beside the configuration and device selectors to choose **Project Default**, **Mono**, or **CoreCLR (Experimental)**. This saves one global `dotnetMeteor.runtime` setting. It applies to mobile builds and debugging; desktop projects retain the existing C# debugger route. Stop an active Meteor session before switching.
+
+Project Default follows the project's evaluated `UseMonoRuntime`. Mono retains our hardened debugger and existing build outputs. CoreCLR sets `UseMonoRuntime=false`, enables diagnostics and packages a matching native debugging agent. Its builds use `obj/meteor-coreclr/` and `bin/meteor-coreclr/`, and path queries receive the same properties as the build. Existing launch and task identifiers remain unchanged. CoreCLR rejects task arguments that override the selected framework, configuration, device or managed runtime/output properties, so build and debugger paths remain consistent. SDK source globs retain their exclusions for normal `obj` and `bin` files when the output roots change.
+
+CoreCLR on iOS and Mac Catalyst requires a .NET 11 target and a workload compatible with your Xcode installation. Android requires .NET 10 or later. The runtime picker does not install SDKs, change target frameworks or bypass Xcode validation. To experiment alongside your stable SDK, set the global `dotnetMeteor.coreClrDotnetPath` to a separate installation's executable and explicitly select CoreCLR. It still respects the project's `global.json`; choose a compatible target with the configuration picker. Switching back to Mono on iOS also requires selecting a .NET 10 target because .NET 11 no longer supports Mono.
+
+Set the global **CoreCLR ReadyToRun** setting (`dotnetMeteor.coreClrReadyToRun`) in VS Code Settings to **Default**, **Disabled**, or **Enabled**. Its initial value is Disabled: Meteor passes `PublishReadyToRun=false` to CoreCLR builds and the matching path/tool queries. Enabled passes `true`; Default leaves the project/SDK value alone. This applies to local Meteor CoreCLR sessions, including a Release configuration used for debugging; it does not change Mono or publishing outside Meteor. CoreCLR task arguments must not override this property; use the global setting or, with Default selected, the project's build configuration.
+
+The [.NET 11 RC1 release notes](https://github.com/dotnet/macios/releases/tag/dotnet-11.0.1xx-rc1-12193#known-issues) report a debugger crash with ReadyToRun enabled. Keep it disabled for initial .NET 11/Xcode 27 debugging until the exact compatible workload has been qualified. Xcode support alone does not establish ReadyToRun debugger compatibility.
+
+Application release compilation settings belong in shared project/build configuration consumed by CI. NativeAOT remains a separate publish experiment: after CoreCLR qualification, use an isolated Jenkins publishing lane with explicit SDK/workload pins, AOT/trimming warning review, startup/capture/layout tests and package size/performance measurements before promotion. Do not enable NativeAOT through this debugger's runtime selector; these adapters do not support NativeAOT debugging.
+
+The experimental backend supports F5 debugging, with Apple sessions currently limited to a local Mac. Run Without Debugging, Meteor profiling, Pair to Mac and the existing XAML Hot Reload agent are not supported by this backend. Mono retains these features. NativeAOT is rejected for both debugger modes. .NET 11/Xcode 27 mobile debugging remains pending qualification against a compatible released workload.
+
+CoreCLR packages include the self-contained [clrdbg 18.0.0 adapter](https://github.com/JaneySprings/clrdbg/releases/tag/18.0.0) and matching remote libraries, with release checksums pinned in `scripts/coreclr-assets.json`. Their MIT license and provenance accompany the binaries. No DotRush extension or source dependency is required. Our protocol wrapper supplies a missing optional exception-filter array required by that adapter release. CI exercises the actual adapter's breakpoints, stack inspection, evaluation and disconnect, plus native-agent MSBuild packaging, on macOS, Linux and Windows. These checks do not replace an iOS simulator run.
+
+To run the backend checks locally, stage the native package with `dotnet cake --target=coreclr`, then run `python scripts/test-coreclr-adapter.py`. The smoke fixture uses .NET 9 and Node; the self-contained adapter carries its own runtime.
+
+The original documentation follows; its profiling, Pair to Mac and Hot Reload instructions apply to the Mono backend.
 
 <img src="https://github.com/JaneySprings/DotNet.Meteor/raw/main/assets/header.jpg" width="1180px" alt=".NET Meteor" align="center" />
 

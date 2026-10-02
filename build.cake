@@ -6,7 +6,7 @@ public string ArtifactsDirectory => _Path.Combine(RootDirectory, "artifacts");
 public string ExtensionStagingDirectory => _Path.Combine(RootDirectory, "extension");
 
 var target = Argument("target", "vsix");
-var version = Argument("release-version", "6.2.14");
+var version = Argument("release-version", "6.3.0");
 var configuration = Argument("configuration", "debug");
 var runtime = Argument("arch", RuntimeInformation.RuntimeIdentifier);
 
@@ -66,6 +66,43 @@ Task("debugger")
 		Runtime = runtime,
 	}));
 
+// Keep the experimental backend beside the hardened Mono adapter. Pin both
+// host binaries and mobile agents to one upstream release and verify every download.
+Task("coreclr").Does(() => {
+	var manifestPath = _Path.Combine(RootDirectory, "scripts", "coreclr-assets.json");
+	using var manifest = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(manifestPath));
+	var backendVersion = manifest.RootElement.GetProperty("version").GetString();
+	var downloadDirectory = _Path.Combine(ArtifactsDirectory, "coreclr-downloads");
+	EnsureDirectoryExists(downloadDirectory);
+	var adapterDirectory = _Path.Combine(ExtensionStagingDirectory, "bin", "CoreClr");
+	var remoteDirectory = _Path.Combine(ExtensionStagingDirectory, "bin", "Remote");
+	CleanDirectory(adapterDirectory);
+	CleanDirectory(remoteDirectory);
+	foreach (var asset in new[] { $"clrdbg_{runtime}.zip", "RemoteCoreClrLibraries.zip" }) {
+		var expectedHash = manifest.RootElement.GetProperty("sha256").GetProperty(asset).GetString();
+		var archive = _Path.Combine(downloadDirectory, asset);
+		if (!System.IO.File.Exists(archive)) {
+			DownloadFile($"https://github.com/JaneySprings/clrdbg/releases/download/{backendVersion}/{asset}", archive);
+		}
+		using (var hash = System.Security.Cryptography.SHA256.Create()) {
+			using var input = System.IO.File.OpenRead(archive);
+			var actualHash = Convert.ToHexString(hash.ComputeHash(input)).ToLowerInvariant();
+			if (actualHash != expectedHash) {
+				throw new Exception($"CoreCLR asset checksum mismatch: {asset}. Delete {archive} and retry.");
+			}
+		}
+		Unzip(archive, asset == "RemoteCoreClrLibraries.zip" ? remoteDirectory : adapterDirectory);
+	}
+	if (!runtime.StartsWith("win-")) {
+		ExecuteCommand("chmod", $"+x \"{_Path.Combine(adapterDirectory, "clrdbg")}\"");
+	}
+	CopyFile(_Path.Combine(RootDirectory, "src", "VSCode", "resources", "CoreClr.targets"), _Path.Combine(ExtensionStagingDirectory, "CoreClr.targets"));
+	CopyFile(_Path.Combine(RootDirectory, "src", "VSCode", "resources", "CoreClr.props"), _Path.Combine(ExtensionStagingDirectory, "CoreClr.props"));
+	CopyFile(_Path.Combine(RootDirectory, "third-party", "clrdbg-LICENSE.txt"), _Path.Combine(adapterDirectory, "LICENSE.txt"));
+	CopyFile(manifestPath, _Path.Combine(adapterDirectory, "upstream.json"));
+	CopyFile(_Path.Combine(RootDirectory, "src", "VSCode", "resources", "coreclr-adapter.cjs"), _Path.Combine(ExtensionStagingDirectory, "coreclr-adapter.cjs"));
+});
+
 
 Task("test")
 	.Does(() => DotNetTest(_Path.Combine(RootDirectory, "src", "DotNet.Meteor.Common.Tests", "DotNet.Meteor.Common.Tests.csproj"),
@@ -91,6 +128,7 @@ Task("vsix")
 	.IsDependentOn("xaml")
 	.IsDependentOn("hotreload")
 	.IsDependentOn("debugger")
+	.IsDependentOn("coreclr")
 	.Does(() => {
 		var vsruntime = runtime.Replace("win-", "win32-").Replace("osx-", "darwin-");
 		var output = _Path.Combine(ArtifactsDirectory, $"DotNet.Meteor.Local.v{version}_{vsruntime}.vsix");

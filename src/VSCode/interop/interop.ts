@@ -7,12 +7,21 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { resolveToolContext, normalizeXcodePath, ToolContext } from './toolContext';
+import { getRuntimePreference, getRuntimeBuildProperties, getCoreClrReadyToRunPreference, MobileRuntime, selectMobileRuntime } from '../models/runtimeSelection';
+
+export interface RuntimeBuildContext {
+    tools: ToolContext;
+    runtime?: MobileRuntime;
+    properties: string[];
+}
 
 
 export class Interop {
     private static workspaceToolPath: string;
+    public static extensionPath = '';
 
     public static initialize(extensionPath : string) {
+        Interop.extensionPath = extensionPath;
         const executableExtension = ConfigurationController.onWindows ? '.exe' : '';
         Interop.workspaceToolPath = path.join(extensionPath, "extension", "bin", "Workspace", "DotNet.Meteor.Workspace" + executableExtension);
         Interop.init();
@@ -73,25 +82,61 @@ export class Interop {
         return ProcessRunner.runSync(new ProcessArgumentBuilder(Interop.workspaceToolPath)
             .append("--android-sdk-path"));
     }
-    public static getPropertyValue(propertyName: string, project: Project, configuration: string, device: Device) : string | undefined {
+    public static getPropertyValue(propertyName: string, project: Project, configuration: string, device: Device,
+        build?: RuntimeBuildContext) : string | undefined {
         const targetFramework = ConfigurationController.getTargetFramework();
         const runtimeIdentifier = device?.runtime_id;
-        const context = Interop.getToolContext(project);
+        build = build ?? Interop.getBuildContext(project, configuration, device);
+        const context = build.tools;
 
         return ProcessRunner.runSync(new ProcessArgumentBuilder(context.executable)
             .append("msbuild").append(project.path)
             .append(`-getProperty:${propertyName}`)
             .conditional(`-p:Configuration=${configuration}`, () => configuration)
             .conditional(`-p:TargetFramework=${targetFramework}`, () => targetFramework)
-            .conditional(`-p:RuntimeIdentifier=${runtimeIdentifier}`, () => runtimeIdentifier), context);
+            .conditional(`-p:RuntimeIdentifier=${runtimeIdentifier}`, () => runtimeIdentifier)
+            .append(...build.properties), context);
     }
     public static getToolContext(project: Project): ToolContext {
-        const configured = vscode.workspace.getConfiguration('dotnetMeteor', vscode.Uri.file(project.path)).get<string>('dotnetPath');
+        const settings = vscode.workspace.getConfiguration('dotnetMeteor', vscode.Uri.file(project.path));
+        const preference = getRuntimePreference(vscode.workspace.getConfiguration('dotnetMeteor').get('runtime'));
+        const configured = (preference === 'coreclr' ? settings.get<string>('coreClrDotnetPath') : undefined)
+            || settings.get<string>('dotnetPath');
         return resolveToolContext(project.path, configured);
     }
 
-    public static getProjectToolContext(project: Project, configuration: string, device: Device | undefined): ToolContext {
-        const context = Interop.getToolContext(project);
+    public static getBuildContext(project: Project, configuration: string, device: Device | undefined): RuntimeBuildContext {
+        const tools = Interop.getToolContext(project);
+        const framework = ConfigurationController.getTargetFramework() ?? '';
+        if (!/-((ios|maccatalyst|android))(?:[\d.]+)?$/i.test(framework)) {
+            return { tools, properties: [] };
+        }
+        const preference = getRuntimePreference(vscode.workspace.getConfiguration('dotnetMeteor').get('runtime'));
+        if (preference !== 'auto') {
+            // Explain an unsupported choice before invoking a possibly incompatible SDK.
+            selectMobileRuntime(preference, framework, {});
+        }
+        const output = ProcessRunner.runSync(new ProcessArgumentBuilder(tools.executable)
+            .append('msbuild', project.path, '-getProperty:UseMonoRuntime,PublishAot,CustomAfterMicrosoftCommonTargets,CustomBeforeMicrosoftCommonProps')
+            .append(`-p:TargetFramework=${framework}`)
+            .conditional(`-p:Configuration=${configuration}`, () => configuration)
+            .conditional(`-p:RuntimeIdentifier=${device?.runtime_id}`, () => device?.runtime_id), tools);
+        if (output === undefined) {
+            throw new Error(`Could not evaluate the runtime for ${framework}. Check dotnetMeteor.dotnetPath (or coreClrDotnetPath), global.json and the installed workloads. See the extension host output for SDK diagnostics.`);
+        }
+        const properties = JSON.parse(output).Properties as Record<string, string>;
+        const runtime = selectMobileRuntime(preference, framework, properties);
+        return { tools, runtime, properties: getRuntimeBuildProperties(runtime, preference,
+            path.join(Interop.extensionPath, 'extension', 'CoreClr.targets'),
+            path.join(Interop.extensionPath, 'extension', 'bin', 'Remote', 'remote-target'),
+            properties.CustomAfterMicrosoftCommonTargets, properties.CustomBeforeMicrosoftCommonProps,
+            runtime === 'coreclr' ? getCoreClrReadyToRunPreference(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrReadyToRun')) : undefined) };
+    }
+
+    public static getProjectToolContext(project: Project, configuration: string, device: Device | undefined,
+        build?: RuntimeBuildContext): ToolContext {
+        build = build ?? Interop.getBuildContext(project, configuration, device);
+        const context = build.tools;
         const framework = ConfigurationController.getTargetFramework();
         const platform = device?.platform ?? framework?.match(/-([a-z]+)/i)?.[1]?.toLowerCase();
         if (process.platform !== 'darwin' || (platform !== 'ios' && platform !== 'maccatalyst')) {
@@ -101,7 +146,8 @@ export class Interop {
             .append('msbuild', project.path, '-getProperty:XcodeLocation,MlaunchPath,_MlaunchPath')
             .conditional(`-p:TargetFramework=${framework}`, () => framework)
             .conditional(`-p:Configuration=${configuration}`, () => configuration)
-            .conditional(`-p:RuntimeIdentifier=${device?.runtime_id}`, () => device?.runtime_id), context);
+            .conditional(`-p:RuntimeIdentifier=${device?.runtime_id}`, () => device?.runtime_id)
+            .append(...build.properties), context);
         if (output === undefined) {
             throw new Error('Could not evaluate project Apple tools. See the extension host output for MSBuild diagnostics.');
         }

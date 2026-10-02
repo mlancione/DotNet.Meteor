@@ -10,7 +10,7 @@ on:
       release_version:
         description: 'VSIX version (X.Y.Z)'
         required: true
-        default: '6.2.14'
+        default: '6.3.0'
       publish_release:
         description: 'Attach all six VSIX files to a GitHub Release'
         type: boolean
@@ -145,6 +145,15 @@ jobs:
       - name: Restore .NET tools
         run: dotnet tool restore
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Stage and test CoreCLR backend
+        run: |
+          dotnet cake --target=coreclr
+          python scripts/test-coreclr-adapter.py
+
       - name: Initialize CoreSimulator
         # The first simctl call can start services on a fresh hosted runner.
         # Warm them before testing Meteor's bounded device-discovery request.
@@ -193,6 +202,15 @@ jobs:
       - name: Restore .NET tools
         run: dotnet tool restore
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Stage and test CoreCLR backend
+        run: |
+          dotnet cake --target=coreclr
+          python scripts/test-coreclr-adapter.py
+
       - name: Run tests
         id: tests
         shell: bash
@@ -235,6 +253,15 @@ jobs:
 
       - name: Restore .NET tools
         run: dotnet tool restore
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Stage and test CoreCLR backend
+        run: |
+          dotnet cake --target=coreclr
+          python scripts/test-coreclr-adapter.py
 
       - name: Run tests
         id: tests

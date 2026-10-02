@@ -1,0 +1,13 @@
+{
+  "version": "18.0.0",
+  "sourceCommit": "7be4dee271353e19dfc1fa7fcdceb346cb5d6f3d",
+  "sha256": {
+    "clrdbg_linux-arm64.zip": "ea468edd899b0b1560f843b0ebc38b3921be757a1e3ba57239f66f042b5971c0",
+    "clrdbg_linux-x64.zip": "6de5eda5b48dddba3b60773d58019e5353cb3a9b3646031ee8ff3c154f996038",
+    "clrdbg_osx-arm64.zip": "c60a0c5d65971f638b3690211568550eaec30c1dd0a2953504b6dd493700216a",
+    "clrdbg_osx-x64.zip": "7393d88770565b8268c154c5a6d7e6c0d76482fa69af64196c811b1e1261fdab",
+    "clrdbg_win-arm64.zip": "fc47cb50513a27ae313d8f69f9bc78b0773c98489ea7b3550241de2ebee42907",
+    "clrdbg_win-x64.zip": "8917260e4ba4c9d0a52f38de0e6b118412d137c8a6aedf85c3d1fe757e5e35bb",
+    "RemoteCoreClrLibraries.zip": "25084a12dba52b4a94de1db07354326a5bbed285f4cea50e7566cdb13c810f58"
+  }
+}

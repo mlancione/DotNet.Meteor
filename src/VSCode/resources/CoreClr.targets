@@ -1,0 +1,32 @@
+<Project>
+    <Import Project="$(MeteorOriginalAfterTargets)"
+            Condition="'$(MeteorOriginalAfterTargets)' != '' and Exists('$(MeteorOriginalAfterTargets)')" />
+
+    <Target Name="_MeteorCopyCoreClrAgent"
+            BeforeTargets="_ComputePublishLocation"
+            Condition="'$(RemoteCoreclrTargetDir)' != '' and ('$(TargetPlatformIdentifier)' == 'ios' or '$(TargetPlatformIdentifier)' == 'maccatalyst')">
+        <PropertyGroup>
+            <_MeteorCoreClrAgent>$(RemoteCoreclrTargetDir)/$(TargetPlatformIdentifier)/$(RuntimeIdentifier)/libremotecoreclrtarget.dylib</_MeteorCoreClrAgent>
+        </PropertyGroup>
+        <Error Condition="!Exists('$(_MeteorCoreClrAgent)')"
+               Text="Meteor CoreCLR debugger agent is missing for $(RuntimeIdentifier): $(_MeteorCoreClrAgent)" />
+        <ItemGroup>
+            <ResolvedFileToPublish Include="$(_MeteorCoreClrAgent)" RelativePath="libremotecoreclrtarget.dylib"
+                                   PublishFolderType="DynamicLibrary" Kind="Dynamic" />
+        </ItemGroup>
+    </Target>
+
+    <PropertyGroup Condition="'$(TargetPlatformIdentifier)' == 'android' and '$(RemoteCoreclrTargetDir)' != ''">
+        <_MeteorCoreClrAbi Condition="'$(RuntimeIdentifier)' == 'android-arm64'">arm64-v8a</_MeteorCoreClrAbi>
+        <_MeteorCoreClrAbi Condition="'$(RuntimeIdentifier)' == 'android-x64'">x86_64</_MeteorCoreClrAbi>
+        <_MeteorCoreClrAgent>$(RemoteCoreclrTargetDir)/android/$(_MeteorCoreClrAbi)/libremotecoreclrtarget.so</_MeteorCoreClrAgent>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'android' and '$(RemoteCoreclrTargetDir)' != '' and '$(AndroidAttachDebugger)' == 'true'">
+        <AndroidNativeLibrary Include="$(_MeteorCoreClrAgent)" />
+    </ItemGroup>
+    <Target Name="_MeteorValidateAndroidCoreClrAgent" BeforeTargets="PrepareForBuild"
+            Condition="'$(TargetPlatformIdentifier)' == 'android' and '$(RemoteCoreclrTargetDir)' != ''">
+        <Error Condition="'$(_MeteorCoreClrAbi)' == '' or !Exists('$(_MeteorCoreClrAgent)')"
+               Text="Meteor CoreCLR debugger agent is missing for $(RuntimeIdentifier): $(_MeteorCoreClrAgent)" />
+    </Target>
+</Project>

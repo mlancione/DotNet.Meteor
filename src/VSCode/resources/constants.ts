@@ -11,6 +11,7 @@ export const commandTitleSelectActiveProject = "Select workspace project";
 
 export const commandIdSelectActiveConfiguration = "dotnet-meteor.selectActiveConfiguration";
 export const commandTitleSelectActiveConfiguration = "Select configuration and target framework";
+export const commandIdSelectRuntime = "dotnet-meteor.selectRuntime";
 
 export const commandIdSelectActiveDevice = "dotnet-meteor.selectActiveDevice";
 export const commandTitleSelectActiveDevice = "Select device";

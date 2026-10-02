@@ -44,8 +44,9 @@ export class MauiEssentials {
             }
         }));
         context.subscriptions.push(vscode.debug.onDidStartDebugSession(ev => {
-            if ((ev.type === res.debuggerMeteorId || ev.type === res.debuggerVsdbgId))
+            if ((ev.type === res.debuggerMeteorId || ev.type === res.debuggerVsdbgId) && ev.configuration.meteorRuntime !== 'coreclr') {
                 MauiEssentials.feature.startAgent();
+            }
         }));
         context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(ev => {
             if (ev.type === res.debuggerMeteorId || ev.type === res.debuggerVsdbgId)

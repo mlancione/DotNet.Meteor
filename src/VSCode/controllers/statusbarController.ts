@@ -5,6 +5,7 @@ import { Project } from '../models/project';
 import { ProjectItem } from '../models/projectItem';
 import { Device } from '../models/device';
 import { supportsFramework } from '../models/deviceSelection';
+import { getRuntimePreference, runtimeChoices, selectMobileRuntime } from '../models/runtimeSelection';
 import { DeviceItem } from '../models/deviceItem';
 import { SeparatorItem } from '../models/separatorItem';
 import { Icons } from '../resources/icons';
@@ -15,6 +16,7 @@ export class StatusBarController {
     private static projectStatusItem: vscode.StatusBarItem | undefined;
     private static targetStatusItem: vscode.StatusBarItem | undefined;
     private static deviceStatusItem: vscode.StatusBarItem | undefined;
+    private static runtimeStatusItem: vscode.StatusBarItem | undefined;
 
     private static deviceRefresh = 0;
     private static projectRefresh = 0;
@@ -22,6 +24,7 @@ export class StatusBarController {
     public static devices: Device[] = [];
 
     public static async activate(context: vscode.ExtensionContext): Promise<void> {
+        StatusBarController.createRuntimeStatusBarItem(context);
         if (vscode.extensions.getExtension(res.dotrushExtensionId) !== undefined)
             return StatusBarController.activateWithDotRush(context);
         
@@ -65,6 +68,58 @@ export class StatusBarController {
         StatusBarController.deviceStatusItem.command = res.commandIdSelectActiveDevice;
         context.subscriptions.push(StatusBarController.deviceStatusItem);
         context.subscriptions.push(vscode.commands.registerCommand(res.commandIdSelectActiveDevice, StatusBarController.showQuickPickDevice));
+    }
+
+    private static createRuntimeStatusBarItem(context: vscode.ExtensionContext) {
+        StatusBarController.runtimeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 85);
+        StatusBarController.runtimeStatusItem.command = res.commandIdSelectRuntime;
+        context.subscriptions.push(StatusBarController.runtimeStatusItem);
+        context.subscriptions.push(vscode.commands.registerCommand(res.commandIdSelectRuntime, StatusBarController.showQuickPickRuntime));
+        context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('dotnetMeteor.runtime') || event.affectsConfiguration('dotnetMeteor.dotnetPath')
+                || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun')) {
+                StatusBarController.updateRuntimeStatusBarItem();
+                void StatusBarController.updateDeviceStatusBarItem();
+            }
+        }));
+        StatusBarController.updateRuntimeStatusBarItem();
+    }
+
+    private static updateRuntimeStatusBarItem() {
+        const item = StatusBarController.runtimeStatusItem;
+        if (!item) {
+            return;
+        }
+        const preference = getRuntimePreference(vscode.workspace.getConfiguration(res.configId).get('runtime'));
+        const choice = runtimeChoices.find(candidate => candidate.preference === preference)!;
+        item.text = `$(debug) ${choice.label}`;
+        item.tooltip = `Meteor runtime: ${choice.label}. Click to change the global extension setting. ${choice.description}.`;
+        item.backgroundColor = undefined;
+        const framework = ConfigurationController.getTargetFramework();
+        if (framework && /-(ios|maccatalyst|android)/i.test(framework) && preference !== 'auto') {
+            try {
+                selectMobileRuntime(preference, framework, {});
+            } catch (error) {
+                item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                item.tooltip = String(error);
+            }
+        }
+        item.show();
+    }
+
+    public static async showQuickPickRuntime() {
+        if (vscode.debug.activeDebugSession?.type === res.debuggerMeteorId) {
+            vscode.window.showInformationMessage('Stop the active Meteor session before changing its runtime.');
+            return;
+        }
+        const preference = getRuntimePreference(vscode.workspace.getConfiguration(res.configId).get('runtime'));
+        const items = runtimeChoices.map(choice => ({ ...choice,
+            picked: choice.preference === preference, detail: choice.preference === preference ? 'Current global setting' : undefined }));
+        const selected = await vscode.window.showQuickPick(items, { placeHolder: 'Select the runtime for Meteor builds and debugging (global setting)' });
+        if (selected) {
+            await vscode.workspace.getConfiguration(res.configId).update('runtime', selected.preference, vscode.ConfigurationTarget.Global);
+            StatusBarController.updateRuntimeStatusBarItem();
+        }
     }
 
     private static async updateProjectStatusBarItem(): Promise<void> {
@@ -145,6 +200,7 @@ export class StatusBarController {
         if (StatusBarController.targetStatusItem !== undefined)
             StatusBarController.targetStatusItem.text = `${Icons.target} ${ConfigurationController.configuration ?? ''} | ${ConfigurationController.getTargetFramework() ?? ''}`;
         StateController.saveConfiguration();
+        StatusBarController.updateRuntimeStatusBarItem();
     }
     public static performSelectFramework(framework: string) {
         if (!ConfigurationController.project?.frameworks.includes(framework))
@@ -160,7 +216,12 @@ export class StatusBarController {
         const configuration = ConfigurationController.configuration;
         const device = ConfigurationController.device;
         if (project && configuration) {
-            return Interop.getProjectToolContext(project, configuration, device);
+            try {
+                return Interop.getProjectToolContext(project, configuration, device);
+            } catch {
+                // Keep device selection usable while the user changes SDK/TFM after a runtime choice.
+                return Interop.getToolContext(project);
+            }
         }
         return project ? Interop.getToolContext(project) : undefined;
     }
