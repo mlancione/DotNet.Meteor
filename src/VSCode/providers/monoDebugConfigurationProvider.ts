@@ -4,6 +4,7 @@ import { Interop } from '../interop/interop';
 import { ConfigurationController } from '../controllers/configurationController';
 import { ExternalTypeResolver } from '../features/externalTypeResolver';
 import { configureCoreClr } from './coreClrConfiguration';
+import { CoreClrHotReload } from './coreClrHotReload';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
 
@@ -53,6 +54,12 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             config.dotnetSdkVersion = ProcessRunner.runSync(new ProcessArgumentBuilder(tools.executable).append('--version'), tools);
             config.targetFramework = ConfigurationController.getTargetFramework();
             config.meteorRuntime = build.runtime ?? 'mono';
+            if (build.runtime === 'coreclr' && config.noDebug && !config.profilerMode && CoreClrHotReload.isEnabled()) {
+                // dotnet watch performs its own build, so no debug session or pre-launch build starts.
+                await CoreClrHotReload.start(config.project, config.configuration, config.device, config.targetFramework,
+                    build, tools, config.dotnetSdkVersion);
+                return undefined;
+            }
             if (build.runtime === 'coreclr') {
                 return configureCoreClr(config, build);
             }

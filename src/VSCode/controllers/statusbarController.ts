@@ -77,7 +77,8 @@ export class StatusBarController {
         context.subscriptions.push(vscode.commands.registerCommand(res.commandIdSelectRuntime, StatusBarController.showQuickPickRuntime));
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
             if (event.affectsConfiguration('dotnetMeteor.runtime') || event.affectsConfiguration('dotnetMeteor.dotnetPath')
-                || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun')) {
+                || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun')
+                || event.affectsConfiguration('dotnetMeteor.coreClrHotReload')) {
                 StatusBarController.updateRuntimeStatusBarItem();
                 void StatusBarController.updateDeviceStatusBarItem();
             }
@@ -94,6 +95,10 @@ export class StatusBarController {
         const choice = runtimeChoices.find(candidate => candidate.preference === preference)!;
         item.text = `$(debug) ${choice.label}`;
         item.tooltip = `Meteor runtime: ${choice.label}. Click to change the global extension setting. ${choice.description}.`;
+        if (preference !== 'mono' && vscode.workspace.getConfiguration(res.configId).get<boolean>('coreClrHotReload') === true) {
+            item.text += ' $(flame)';
+            item.tooltip += ' Hot Reload is enabled for CoreCLR Run Without Debugging on iOS.';
+        }
         item.backgroundColor = undefined;
         const framework = ConfigurationController.getTargetFramework();
         if (framework && /-(ios|maccatalyst|android)/i.test(framework) && preference !== 'auto') {

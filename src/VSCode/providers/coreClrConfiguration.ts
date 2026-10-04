@@ -10,7 +10,7 @@ export function configureCoreClr(config: vscode.DebugConfiguration, build: Runti
         throw new Error('Experimental CoreCLR debugging for Apple apps currently requires a local Mac. The existing Mono Pair to Mac support is unchanged.');
     }
     if (config.noDebug || config.profilerMode) {
-        throw new Error('The experimental CoreCLR backend currently supports F5 debugging. Run Without Debugging and Meteor profiling are not yet supported by this backend.');
+        throw new Error('The experimental CoreCLR backend currently supports F5 debugging. Run Without Debugging and Meteor profiling are not yet supported by this backend. For iOS, enable dotnetMeteor.coreClrHotReload to use Run Without Debugging with Hot Reload.');
     }
     const reserved = Object.keys(config.env ?? {}).filter(key => key === 'CORECLR_ENABLE_PROFILING' || key === 'CORECLR_PROFILER'
         || key === 'CORECLR_PROFILER_PATH' || key.startsWith('CORECLR_REMOTE_DEBUGGER_'));
