@@ -11,7 +11,7 @@ To build and publish all six packages:
 ```sh
 gh workflow run ci.yml --repo mlancione/DotNet.Meteor \
   --ref main \
-  -f release_version=6.3.0 -f publish_release=true
+  -f release_version=6.3.1 -f publish_release=true
 ```
 
 Use a new numeric version for changed source. Set `publish_release=false` for artifact-only builds. Successful release builds create `local-v<VERSION>` at the exact built commit and attach Linux, macOS and Windows x64/ARM64 VSIX files. Tag pushes matching `local-v*` also publish releases. The GitHub workflow does not publish to the VS Code Marketplace.

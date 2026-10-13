@@ -28,6 +28,28 @@ public class WorkspaceAnalysisTests: TestFixture {
         });
     }
     [Test]
+    public void AnalyzeConditionalSingleFrameworks() {
+        var projectPath = CreateMockProject(@"
+        <Project Sdk=""Microsoft.NET.Sdk"">
+            <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0-ios</TargetFramework>
+                <TargetFramework Condition=""'$(Configuration)' == 'Debug'"">net10.0-ios</TargetFramework>
+                <TargetFramework Condition=""'$(Configuration)' == 'DebugCoreCLR'"">net11.0-ios</TargetFramework>
+                <!-- <TargetFramework>net9.0-ios</TargetFramework> -->
+                <Configurations>Debug;Release;DebugCoreCLR</Configurations>
+            </PropertyGroup>
+        </Project>
+        ");
+        var actual = WorkspaceAnalyzer.AnalyzeProject(projectPath);
+
+        Assert.That(actual, Is.Not.Null);
+        Assert.Multiple(() => {
+            Assert.That(actual!.Frameworks, Is.EqualTo(new[] { "net10.0-ios", "net11.0-ios" }));
+            Assert.That(actual.Configurations, Does.Contain("DebugCoreCLR"));
+        });
+    }
+    [Test]
     public void AnalyzeProjectWithMultipleFrameworks() {
         var projectPath = CreateMockProject(@"
         <Project Sdk=""Microsoft.NET.Sdk"">

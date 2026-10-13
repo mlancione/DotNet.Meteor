@@ -39,15 +39,14 @@ public static class WorkspaceAnalyzer {
     private static IEnumerable<string> GetTargetFrameworks(Project project) {
         var frameworks = new List<string>();
 
-        var singleFramework = project.EvaluateProperty("TargetFramework");
-        if (!string.IsNullOrEmpty(singleFramework)) {
-            frameworks.Add(singleFramework);
-            return frameworks;
+        // Discovery includes conditional assignments so every selectable target
+        // is available. A single-target project can therefore yield a list too.
+        var discoveredFrameworks = project.EvaluateProperty("TargetFramework");
+        if (string.IsNullOrEmpty(discoveredFrameworks)) {
+            discoveredFrameworks = project.EvaluateProperty("TargetFrameworks");
         }
-
-        var multipleFrameworks = project.EvaluateProperty("TargetFrameworks");
-        if (!string.IsNullOrEmpty(multipleFrameworks)) {
-            foreach (var framework in multipleFrameworks.Split(';')) {
+        if (!string.IsNullOrEmpty(discoveredFrameworks)) {
+            foreach (var framework in discoveredFrameworks.Split(';')) {
                 if (frameworks.Contains(framework) || string.IsNullOrEmpty(framework))
                     continue;
                 frameworks.Add(framework);
