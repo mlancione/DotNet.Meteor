@@ -44,3 +44,9 @@ test('attachment, errors, termination and cancellation all clear the deadline', 
 test('CoreCLR deadline never changes Mono sessions', () => {
     assert.equal(new CoreClrLaunchTracker().createDebugAdapterTracker({ configuration: { meteorRuntime: 'mono' } }), undefined);
 });
+
+test('SDK Hot Reload sessions do not start the debugger attachment deadline', () => {
+    assert.equal(new CoreClrLaunchTracker().createDebugAdapterTracker({
+        configuration: { meteorRuntime: 'coreclr', meteorCSharpHotReload: { executable: '/sdk/dotnet' } }
+    }), undefined);
+});

@@ -2,6 +2,7 @@ import * as path from 'path';
 
 export type RuntimePreference = 'auto' | 'mono' | 'coreclr';
 export type MobileRuntime = 'mono' | 'coreclr';
+export type CoreClrDebugger = 'meteor' | 'microsoft';
 export type CoreClrReadyToRunPreference = 'default' | 'disabled' | 'enabled';
 
 export const runtimeChoices = [
@@ -18,6 +19,13 @@ export function getRuntimePreference(value: unknown): RuntimePreference {
         return value ?? 'auto';
     }
     throw new Error('dotnetMeteor.runtime must be auto, mono or coreclr.');
+}
+
+export function getCoreClrDebugger(value: unknown): CoreClrDebugger {
+    if (value === undefined || value === 'meteor' || value === 'microsoft') {
+        return value ?? 'meteor';
+    }
+    throw new Error('dotnetMeteor.coreClrDebugger must be meteor or microsoft.');
 }
 
 export function getCoreClrReadyToRunPreference(value: unknown): CoreClrReadyToRunPreference {
@@ -53,21 +61,32 @@ export function selectMobileRuntime(preference: RuntimePreference, framework: st
 
 export function getRuntimeBuildProperties(runtime: MobileRuntime, preference: RuntimePreference,
     targetsPath: string, remoteTargetPath: string, originalAfterTargets?: string, originalBeforeProps?: string,
-    readyToRun: CoreClrReadyToRunPreference = 'disabled'): string[] {
+    readyToRun: CoreClrReadyToRunPreference = 'disabled', csharpHotReload = false, debuggerBackend: CoreClrDebugger = 'meteor'): string[] {
     if (runtime === 'mono') {
         return preference === 'mono' ? ['-p:UseMonoRuntime=true'] : [];
     }
+    const microsoft = debuggerBackend === 'microsoft' && !csharpHotReload;
+    const output = csharpHotReload ? 'meteor-coreclr-hotreload' : microsoft ? 'meteor-coreclr-microsoft' : 'meteor-coreclr';
     const properties = [
         '-p:UseMonoRuntime=false',
         '-p:EnableDiagnostics=true',
-        '-p:BaseIntermediateOutputPath=obj/meteor-coreclr/',
-        '-p:BaseOutputPath=bin/meteor-coreclr/',
+        `-p:BaseIntermediateOutputPath=obj/${output}/`,
+        `-p:BaseOutputPath=bin/${output}/`,
         `-p:CustomBeforeMicrosoftCommonProps=${path.join(path.dirname(targetsPath), 'CoreClr.props')}`,
         `-p:CustomAfterMicrosoftCommonTargets=${targetsPath}`,
-        `-p:RemoteCoreclrTargetDir=${remoteTargetPath}`
+        // The SDK watcher launches directly; no debugger agent is needed.
+        `-p:RemoteCoreclrTargetDir=${csharpHotReload ? '' : remoteTargetPath}`
     ];
-    if (readyToRun !== 'default') {
-        properties.push(`-p:PublishReadyToRun=${readyToRun === 'enabled'}`);
+    if (microsoft) {
+        properties.push('-p:MeteorCoreClrAgentName=libvsdbgremotecoreclrtarget.dylib');
+    }
+    if (csharpHotReload || readyToRun !== 'default') {
+        properties.push(`-p:PublishReadyToRun=${!csharpHotReload && readyToRun === 'enabled'}`);
+    }
+    if (csharpHotReload || microsoft) {
+        properties.push('-p:TrimMode=copy', '-p:MtouchLink=None', '-p:Registrar=partial-static',
+            '-p:HotReloadCompatibleBuild=true', '-p:MtouchDebug=true', '-p:DebuggerSupport=true',
+            '-p:Optimize=false', '-p:DebugSymbols=true', '-p:DebugType=portable');
     }
     if (originalAfterTargets) {
         properties.push(`-p:MeteorOriginalAfterTargets=${originalAfterTargets}`);

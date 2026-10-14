@@ -9,16 +9,17 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText, filename);
 
-let settings, selected, calls, properties, errors, activeSession;
+let settings, selected, calls, properties, errors, activeSession, extensions;
 const vscode = {
     ThemeIcon: class {}, ThemeColor: class {}, QuickPickItemKind: { Separator: -1 },
     Uri: { file: value => value }, ConfigurationTarget: { Global: 1 },
-    workspace: { getConfiguration: () => ({
+    extensions: { getExtension: id => extensions?.[id] },
+    workspace: { isTrusted: true, getConfiguration: () => ({
         get: key => settings[key],
         update: async (key, value, target) => { calls.push({ key, value, target }); settings[key] = value; }
     }) },
     window: {
-        showQuickPick: async items => items.find(item => item.preference === selected),
+        showQuickPick: async items => selected === undefined ? undefined : items.find(item => item.preference === selected || item.backend === selected),
         showErrorMessage: value => errors.push(value), showInformationMessage: value => errors.push(value)
     },
     debug: { get activeDebugSession() { return activeSession; } },
@@ -34,7 +35,11 @@ const vscode = {
     DebugAdapterExecutable: class { constructor(command, args, options) { Object.assign(this, { command, args, options }); } }
 };
 const load = Module._load;
-Module._load = function(id, ...args) { return id === 'vscode' ? vscode : load.call(this, id, ...args); };
+Module._load = function(id, ...args) {
+    if (id === 'vscode') { return vscode; }
+    if (id === 'net') { return { createServer: () => ({ once() {}, listen(port, ip, callback) { callback(); }, address: () => ({ port: 54321 }), close(callback) { callback(); } }) }; }
+    return load.call(this, id, ...args);
+};
 const { selectMobileRuntime, getRuntimePreference, getCoreClrReadyToRunPreference } = require('../src/VSCode/models/runtimeSelection.ts');
 const { Interop } = require('../src/VSCode/interop/interop.ts');
 const { getCoreClrPaths } = require('../src/VSCode/interop/coreClr.ts');
@@ -56,10 +61,21 @@ const adapter = path.join(root, 'extension', 'bin', 'CoreClr', 'clrdbg');
 const host = path.join(root, 'extension', 'bin', 'Remote', 'remote-host', `osx-${process.arch}`, 'libremotecoreclrhost.dylib');
 const agent = path.join(root, 'extension', 'bin', 'Remote', 'remote-target', 'ios', 'iossimulator-arm64', 'libremotecoreclrtarget.dylib');
 const wrapper = path.join(root, 'extension', 'coreclr-adapter.cjs');
-for (const p of [adapter, host, agent, wrapper]) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, 'fixture'); }
+const microsoftRoot = path.join(root, 'microsoft maui');
+const microsoftHost = path.join(microsoftRoot, 'dist/resources/VsdbgRemoteCoreclrHost', `osx-${process.arch}`, 'libvsdbgremotecoreclrhost.dylib');
+const microsoftAgent = path.join(microsoftRoot, 'dist/resources/VsdbgRemoteCoreclrTarget/ios/iossimulator-arm64/libvsdbgremotecoreclrtarget.dylib');
+const microsoftDbi = path.join(path.dirname(microsoftHost), 'libremotemscordbihost.dylib');
+for (const file of [microsoftHost, microsoftAgent, microsoftDbi]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'microsoft fixture'); }
+const hotReloadWrapper = path.join(root, 'extension', 'coreclr-hotreload.cjs');
+for (const p of [adapter, host, agent, wrapper, hotReloadWrapper]) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, 'fixture'); }
 beforeEach(() => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     config.onMac = true; config.onWindows = false;
+    extensions = {
+        'ms-dotnettools.csharp': { packageJSON: { contributes: { debuggers: [{ type: 'coreclr_mobile' }] } }, activate: async () => ({ initializationFinished: async () => {} }) },
+        'ms-dotnettools.csdevkit': { activate: async () => ({ getBrokeredServiceServerPipeName: async () => 'broker-pipe' }) },
+        'ms-dotnettools.dotnet-maui': { extensionPath: microsoftRoot }
+    };
     settings = { dotnetPath: executable, runtime: 'auto' };
     calls = []; properties = {}; errors = []; activeSession = undefined; selected = undefined;
     config.project = { path: path.join(root, 'App.csproj'), frameworks: ['net10.0-ios', 'net11.0-ios27.0'], configurations: ['Debug'] };
@@ -259,4 +275,168 @@ test('ReadyToRun cannot be changed by task-only overrides that bypass path and d
     for (const arg of ['-p:PublishReadyToRun=true', '/property:Other=1;PublishReadyToRun=false']) {
         assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: [arg] }), /conflicting task argument/);
     }
+});
+
+
+test('C# Hot Reload is globally opt-in and ordinary F5 retains breakpoint debugging', async () => {
+    settings.runtime = 'coreclr'; settings.coreClrHotReload = true;
+    config.targetFramework = 'net11.0-ios'; config.project.frameworks.push('net11.0-ios'); properties.UseMonoRuntime = 'false';
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type: 'dotnet-meteor.debugger', name: 'F5', request: 'launch', noDebug: false
+    });
+    assert.ok(launch); assert.equal(launch.meteorCSharpHotReload, undefined);
+    assert.ok(launch.coreClrMobileDebuggerOptions);
+    assert.ok(Interop.getBuildContext(config.project, 'Debug', config.device).properties.includes('-p:BaseOutputPath=bin/meteor-coreclr/'));
+    const setting = JSON.parse(fs.readFileSync('package.json')).contributes.configuration[0].properties['dotnetMeteor.coreClrHotReload'];
+    assert.equal(setting.default, false); assert.equal(setting.scope, 'application');
+});
+test('Ctrl+F5 watcher and prelaunch build share untrimmed isolated outputs and selected SDK', async () => {
+    settings.runtime = 'coreclr'; settings.coreClrDotnetPath = experimental;
+    settings.coreClrHotReload = true; settings.coreClrReadyToRun = 'enabled';
+    config.targetFramework = 'net11.0-ios'; config.project.frameworks.push('net11.0-ios'); properties.UseMonoRuntime = 'false';
+    config.device.serial = '22B78AE6-35E0-4A03-AF72-DE7071E90F65';
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type: 'dotnet-meteor.debugger', name: 'Hot Reload', request: 'launch', noDebug: true,
+        env: { GREETING: 'value with spaces' }
+    });
+    assert.ok(launch, errors.join('\n'));
+    const watch = launch.meteorCSharpHotReload;
+    assert.equal(watch.executable, experimental); assert.equal(watch.cwd, root);
+    assert.equal(watch.args[0], 'watch');
+    assert.ok(watch.args.includes(config.project.path));
+    assert.ok(watch.args.includes('--property:TrimMode=copy'));
+    assert.ok(watch.args.includes('--property:Registrar=partial-static'));
+    assert.ok(watch.args.includes('--property:PublishReadyToRun=false'));
+    assert.ok(!watch.args.some(value => value.startsWith('-p:')));
+    assert.ok(watch.args.includes('GREETING=value with spaces'));
+    const task = new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task' });
+    const build = Interop.getBuildContext(config.project, 'Debug', config.device);
+    for (const property of build.properties) {
+        assert.ok(task.execution.args.includes(property), property);
+        assert.ok(watch.args.includes(property.replace(/^-p:/, '--property:')), property);
+    }
+    assert.ok(build.properties.includes('-p:BaseOutputPath=bin/meteor-coreclr-hotreload/'));
+    const descriptor = new MonoDebugAdapterFactory().createDebugAdapterDescriptor({ configuration: launch });
+    assert.deepEqual(descriptor.args, [hotReloadWrapper]);
+});
+test('Hot Reload rejects conflicting task and SDK launch environment overrides', async () => {
+    settings.runtime = 'coreclr'; settings.coreClrHotReload = true;
+    config.targetFramework = 'net11.0-ios'; config.project.frameworks.push('net11.0-ios'); properties.UseMonoRuntime = 'false'; config.noDebug = true;
+    for (const arg of ['-p:TrimMode=partial', '/property:Other=1;Registrar=managed-static', '-p:HotReloadCompatibleBuild=false', '-p:DefineConstants=CUSTOM']) {
+        assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: [arg] }), /C# Hot Reload controls/);
+    }
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type: 'dotnet-meteor.debugger', name: 'bad env', request: 'launch', noDebug: true,
+        env: { DOTNET_STARTUP_HOOKS: '/another hook.dll' }
+    });
+    assert.equal(launch, undefined); assert.match(errors.at(-1), /SDK watcher controls/);
+});
+test('Hot Reload restricts its first supported lane to local C# .NET11 iOS simulators', () => {
+    settings.runtime = 'coreclr'; settings.coreClrHotReload = true;
+    config.targetFramework = 'net11.0-ios'; config.project.frameworks.push('net11.0-ios'); config.noDebug = true;
+    config.device.is_emulator = false;
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /local iOS simulator/);
+    config.device.is_emulator = true; config.project.path = path.join(root, 'App.fsproj');
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /C# .NET 11/);
+    config.project.path = path.join(root, 'App.csproj'); config.device.platform = 'android'; config.targetFramework = 'net11.0-android'; config.project.frameworks.push('net11.0-android');
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /local iOS simulator/);
+});
+
+function selectMicrosoft() {
+    settings.runtime = 'coreclr'; settings.coreClrDebugger = 'microsoft'; settings.coreClrDotnetPath = experimental;
+    config.targetFramework = 'net11.0-ios27.0'; properties.UseMonoRuntime = 'false';
+}
+test('Microsoft task and path queries share isolated outputs and matching external agent', () => {
+    selectMicrosoft();
+    const task = new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task' });
+    const build = Interop.getBuildContext(config.project, 'Debug', config.device);
+    config.getProgramPath(config.project, 'Debug', config.device, build);
+    const query = calls.find(call => call.args?.includes('-getProperty:TargetPath'));
+    for (const arg of ['-p:BaseOutputPath=bin/meteor-coreclr-microsoft/', '-p:BaseIntermediateOutputPath=obj/meteor-coreclr-microsoft/',
+        '-p:MeteorCoreClrAgentName=libvsdbgremotecoreclrtarget.dylib', '-p:TrimMode=copy', '-p:MtouchLink=None', '-p:PublishReadyToRun=false']) {
+        assert.ok(task.execution.args.includes(arg), arg); assert.ok(query.args.includes(arg), arg);
+    }
+    assert.ok(task.execution.args.includes(`-p:RemoteCoreclrTargetDir=${path.join(microsoftRoot, 'dist/resources/VsdbgRemoteCoreclrTarget')}`));
+    assert.ok(!task.execution.args.some(arg => arg.includes('bin/Remote/remote-target')));
+    assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['-p:MeteorCoreClrAgentName=other'] }), /conflicting/);
+});
+test('Microsoft resolution delegates to C# mobile adapter with DLL and captured simulator launch', async () => {
+    selectMicrosoft();
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type: 'dotnet-meteor.debugger', name: 'Microsoft', request: 'launch', preLaunchTask: 'dotnet-meteor: Build',
+        env: { VALUE: 'with spaces' }, args: ['argument with spaces']
+    });
+    assert.ok(launch, errors.join('\n')); assert.equal(launch.type, 'coreclr_mobile');
+    assert.equal(launch.program, path.join(path.dirname(app), 'App.dll'));
+    assert.equal(launch.meteorMicrosoftLaunch.app, app); assert.equal(launch.meteorMicrosoftLaunch.device, 'selected-udid');
+    assert.equal(launch.coreClrMobileDebuggerOptions.platform, 'ios;arm64'); assert.equal(launch.coreClrMobileDebuggerOptions.isServer, true);
+    assert.ok(launch.coreClrMobileDebuggerOptions.port > 0); assert.ok(launch.coreClrMobileDebuggerOptions.assetsPath.includes(path.dirname(microsoftHost)));
+    assert.equal(launch.brokeredServicePipeName, 'broker-pipe'); assert.equal(launch.preLaunchTask, 'dotnet-meteor: Build');
+    assert.equal(launch.meteorMicrosoftLaunch.env.DEVELOPER_DIR, developer); assert.equal(launch.meteorMicrosoftLaunch.mlaunch, experimental);
+    assert.deepEqual(launch.meteorMicrosoftLaunch.applicationEnvironment, { VALUE: 'with spaces' });
+    assert.deepEqual(launch.meteorMicrosoftLaunch.args, ['argument with spaces']);
+    assert.equal(launch.env, undefined); assert.equal(launch.remoteCoreclrTarget, undefined);
+});
+test('Microsoft dependencies fail clearly before build, including missing mobile adapter and transport', () => {
+    selectMicrosoft();
+    delete extensions['ms-dotnettools.csdevkit'];
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /requires the installed Microsoft/);
+    extensions['ms-dotnettools.csdevkit'] = {};
+    extensions['ms-dotnettools.csharp'].packageJSON.contributes.debuggers = [];
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /does not provide coreclr_mobile/);
+    extensions['ms-dotnettools.csharp'].packageJSON.contributes.debuggers = [{ type: 'coreclr_mobile' }];
+    extensions['ms-dotnettools.dotnet-maui'].extensionPath = path.join(root, 'updated-but-incomplete');
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /component is missing/);
+});
+test('Microsoft backend selection leaves Mono and SDK-watch independent of Microsoft prerequisites', () => {
+    settings.coreClrDebugger = 'microsoft'; extensions = {};
+    const mono = Interop.getBuildContext(config.project, 'Debug', config.device);
+    assert.equal(mono.runtime, 'mono'); assert.deepEqual(mono.properties, []);
+    selectMicrosoft(); extensions = {}; config.noDebug = true; settings.coreClrHotReload = true;
+    const watch = Interop.getBuildContext(config.project, 'Debug', config.device);
+    assert.equal(watch.csharpHotReload, true); assert.equal(watch.microsoftDebugger, undefined);
+    assert.ok(watch.properties.includes('-p:RemoteCoreclrTargetDir='));
+    assert.ok(watch.properties.includes('-p:BaseOutputPath=bin/meteor-coreclr-hotreload/'));
+});
+test('Microsoft activation honors cancellation and rejects unavailable broker or malformed app environment', async () => {
+    selectMicrosoft();
+    const provider = new MonoDebugConfigurationProvider();
+    const base = () => ({ type: 'dotnet-meteor.debugger', name: 'Microsoft', request: 'launch' });
+    assert.equal(await provider.resolveDebugConfiguration(undefined, base(), { isCancellationRequested: true }), undefined);
+    assert.equal(errors.length, 0);
+    extensions['ms-dotnettools.csdevkit'].activate = async () => ({});
+    assert.equal(await provider.resolveDebugConfiguration(undefined, base()), undefined); assert.match(errors.pop(), /mobile debugger broker/);
+    assert.equal(await provider.resolveDebugConfiguration(undefined, { ...base(), env: { INVALID: 42 } }), undefined); assert.match(errors.pop(), /must be strings/);
+});
+test('unqualified Microsoft targets fail instead of silently using another debugger', () => {
+    selectMicrosoft(); config.device.is_emulator = false; config.device.runtime_id = 'ios-arm64';
+    assert.throws(() => Interop.getBuildContext(config.project, 'Debug', config.device), /local iOS/);
+});
+
+test('cancelling Microsoft initialization promptly cancels resolution without an error popup', async () => {
+    selectMicrosoft(); let cancel;
+    extensions['ms-dotnettools.csharp'].activate = async () => ({ initializationFinished: () => new Promise(() => {}) });
+    const token = { isCancellationRequested: false, onCancellationRequested: callback => { cancel = callback; return { dispose() {} }; } };
+    const pending = new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type: 'dotnet-meteor.debugger', name: 'Cancel', request: 'launch'
+    }, token);
+    await new Promise(setImmediate); token.isCancellationRequested = true; cancel();
+    assert.equal(await pending, undefined); assert.equal(errors.length, 0);
+});
+
+test('CoreCLR debugger picker changes one global setting and protects active mobile sessions', async () => {
+    selected = 'microsoft'; await status.showQuickPickCoreClrDebugger();
+    assert.deepEqual(calls, [{ key: 'coreClrDebugger', value: 'microsoft', target: vscode.ConfigurationTarget.Global }]);
+    calls = []; activeSession = { type: 'coreclr_mobile', configuration: { meteorRuntime: 'coreclr' } };
+    await status.showQuickPickCoreClrDebugger(); await status.showQuickPickRuntime();
+    assert.equal(calls.length, 0); assert.equal(errors.length, 2);
+});
+
+test('Microsoft x64 simulator selection uses its matching external target and architecture moniker', async () => {
+    selectMicrosoft(); config.device.runtime_id = 'iossimulator-x64';
+    const file = path.join(microsoftRoot, 'dist/resources/VsdbgRemoteCoreclrTarget/ios/iossimulator-x64/libvsdbgremotecoreclrtarget.dylib');
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'x64 target fixture');
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, { type: 'dotnet-meteor.debugger', name: 'x64', request: 'launch' });
+    assert.ok(launch, errors.join('\n')); assert.equal(launch.coreClrMobileDebuggerOptions.platform, 'ios;x64');
+    assert.equal(launch.meteorMicrosoftLaunch.targetLibrary, file);
 });

@@ -1,7 +1,7 @@
 {
   "name": "dotnet-meteor-local",
   "publisher": "localdev",
-  "version": "6.3.1",
+  "version": "6.3.3",
   "description": "Run and Debug .NET Apps (MAUI, Avalonia, Xamarin.Native)",
   "displayName": ".NET Meteor (Local)",
   "author": "Nikita Romanov",
@@ -75,6 +75,11 @@
         "command": "dotnet-meteor.selectRuntime",
         "category": "%extension.displayName%",
         "title": "Select runtime (Mono / CoreCLR)"
+      },
+      {
+        "command": "dotnet-meteor.selectCoreClrDebugger",
+        "category": "%extension.displayName%",
+        "title": "Select CoreCLR debugger (Meteor / Microsoft)"
       },
       {
         "command": "dotnet-meteor.selectActiveDevice",
@@ -322,7 +327,31 @@
             ],
             "default": "disabled",
             "scope": "application",
-            "description": "Global ReadyToRun override for experimental CoreCLR sessions, including the matching build and property queries. Disabled by default because .NET 11 RC1 reports a debugger incompatibility. Does not affect Mono builds or builds/publishing outside Meteor."
+            "description": "Global ReadyToRun override for experimental CoreCLR sessions, including the matching build and property queries. Disabled by default because .NET 11 RC1 reports a debugger incompatibility. C# Hot Reload sessions always disable ReadyToRun. Does not affect Mono builds or builds/publishing outside Meteor."
+          },
+          "dotnetMeteor.coreClrHotReload": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "description": "Experimental C# Hot Reload for CoreCLR Run Without Debugging (Ctrl+F5) on local .NET 11+ iOS simulators. Uses SDK dotnet watch, untrimmed assemblies, ReadyToRun disabled and separate outputs. F5 retains normal breakpoint debugging without C# Hot Reload. Updates apply on save; the XAML Apply Changes On Save preference is separate."
+          },
+          "dotnetMeteor.coreClrDebugger": {
+            "type": "string",
+            "enum": [
+              "meteor",
+              "microsoft"
+            ],
+            "enumItemLabels": [
+              "Meteor (clrdbg)",
+              "Microsoft (vsdbg)"
+            ],
+            "default": "meteor",
+            "scope": "application",
+            "enumDescriptions": [
+              "Use the bundled experimental CoreCLR debugger.",
+              "Use the installed Microsoft C# mobile debugger and matching .NET MAUI transport libraries. Requires Microsoft VS Code, C#, C# Dev Kit and .NET MAUI. Initial support is local .NET 11+ iOS simulators."
+            ],
+            "description": "Global F5 CoreCLR debugger backend. Microsoft uses separate build outputs and externally installed components; Meteor bundles no Microsoft debugger binaries. SDK-watch C# Hot Reload remains a separate Ctrl+F5 workflow. Debugger-attached Edit and Continue is not qualified."
           }
         }
       },

@@ -6,13 +6,17 @@ import { Device } from '../models/device';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
+import { getMicrosoftDebuggerPaths } from './microsoftDebugger';
 import { resolveToolContext, normalizeXcodePath, ToolContext } from './toolContext';
-import { getRuntimePreference, getRuntimeBuildProperties, getCoreClrReadyToRunPreference, MobileRuntime, selectMobileRuntime } from '../models/runtimeSelection';
+import { getRuntimePreference, getRuntimeBuildProperties, getCoreClrReadyToRunPreference, getCoreClrDebugger, CoreClrDebugger, MobileRuntime, selectMobileRuntime } from '../models/runtimeSelection';
 
 export interface RuntimeBuildContext {
     tools: ToolContext;
     runtime?: MobileRuntime;
     properties: string[];
+    csharpHotReload?: boolean;
+    debuggerBackend?: CoreClrDebugger;
+    microsoftDebugger?: ReturnType<typeof getMicrosoftDebuggerPaths>;
 }
 
 
@@ -126,11 +130,22 @@ export class Interop {
         }
         const properties = JSON.parse(output).Properties as Record<string, string>;
         const runtime = selectMobileRuntime(preference, framework, properties);
-        return { tools, runtime, properties: getRuntimeBuildProperties(runtime, preference,
+        const csharpHotReload = runtime === 'coreclr' && ConfigurationController.noDebug === true
+            && vscode.workspace.getConfiguration('dotnetMeteor').get<boolean>('coreClrHotReload', false);
+        if (csharpHotReload && (process.platform !== 'darwin' || device?.platform !== 'ios'
+            || !device.is_emulator || !/^net(?:1[1-9]|[2-9]\d)\.\d+-ios(?:[\d.]+)?$/i.test(framework)
+            || path.extname(project.path).toLowerCase() !== '.csproj')) {
+            throw new Error('C# Hot Reload currently requires a C# .NET 11+ CoreCLR app on a local iOS simulator. Select a supported target/device or disable dotnetMeteor.coreClrHotReload.');
+        }
+        const debuggerBackend = runtime === 'coreclr' && !csharpHotReload
+            ? getCoreClrDebugger(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrDebugger')) : 'meteor';
+        const microsoftDebugger = debuggerBackend === 'microsoft' ? getMicrosoftDebuggerPaths(device) : undefined;
+        return { tools, runtime, csharpHotReload, debuggerBackend, microsoftDebugger, properties: getRuntimeBuildProperties(runtime, preference,
             path.join(Interop.extensionPath, 'extension', 'CoreClr.targets'),
-            path.join(Interop.extensionPath, 'extension', 'bin', 'Remote', 'remote-target'),
+            microsoftDebugger?.target ?? path.join(Interop.extensionPath, 'extension', 'bin', 'Remote', 'remote-target'),
             properties.CustomAfterMicrosoftCommonTargets, properties.CustomBeforeMicrosoftCommonProps,
-            runtime === 'coreclr' ? getCoreClrReadyToRunPreference(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrReadyToRun')) : undefined) };
+            runtime === 'coreclr' ? getCoreClrReadyToRunPreference(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrReadyToRun')) : undefined,
+            csharpHotReload, debuggerBackend) };
     }
 
     public static getProjectToolContext(project: Project, configuration: string, device: Device | undefined,

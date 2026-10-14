@@ -46,8 +46,11 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
     private getBuildTask(definition: vscode.TaskDefinition): vscode.Task {
         const build = Interop.getBuildContext(ConfigurationController.project!, ConfigurationController.configuration!, ConfigurationController.device!);
         const context = Interop.getProjectToolContext(ConfigurationController.project!, ConfigurationController.configuration!, ConfigurationController.device!, build);
-        if (build.runtime === 'coreclr') {
+        if (build.runtime === 'coreclr' && !build.csharpHotReload && build.debuggerBackend !== 'microsoft') {
             getCoreClrPaths(Interop.extensionPath, ConfigurationController.device!);
+        }
+        if (build.csharpHotReload && definition.args?.length) {
+            throw new Error('C# Hot Reload controls its build arguments. Custom task args are not shared with the SDK watcher; move shared build settings into the project or Directory.Build.props, or use normal F5.');
         }
         const builder = new ProcessArgumentBuilder(context.executable)
             .append('build')
@@ -82,7 +85,7 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
             RemoteHostProvider.feature.connect(builder);
 
         definition.args?.forEach((arg: string) => {
-            if ((build.runtime === 'coreclr' && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])(UseMonoRuntime|PublishReadyToRun|EnableDiagnostics|BaseIntermediateOutputPath|BaseOutputPath|CustomAfterMicrosoftCommonTargets|CustomBeforeMicrosoftCommonProps|RemoteCoreclrTargetDir|MeteorOriginalAfterTargets|MeteorOriginalBeforeProps|TargetFramework|TargetFrameworks|RuntimeIdentifier|Configuration|OutputPath|IntermediateOutputPath|MSBuildProjectExtensionsPath|MtouchDebug|_BundlerDebug)\s*=/i.test(arg))
+            if ((build.runtime === 'coreclr' && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])(UseMonoRuntime|PublishReadyToRun|EnableDiagnostics|BaseIntermediateOutputPath|BaseOutputPath|CustomAfterMicrosoftCommonTargets|CustomBeforeMicrosoftCommonProps|RemoteCoreclrTargetDir|MeteorCoreClrAgentName|TrimMode|MtouchLink|Registrar|HotReloadCompatibleBuild|DebuggerSupport|Optimize|DebugSymbols|DebugType|MeteorOriginalAfterTargets|MeteorOriginalBeforeProps|TargetFramework|TargetFrameworks|RuntimeIdentifier|Configuration|OutputPath|IntermediateOutputPath|MSBuildProjectExtensionsPath|MtouchDebug|_BundlerDebug)\s*=/i.test(arg))
                 || (build.properties.includes('-p:UseMonoRuntime=true') && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])UseMonoRuntime\s*=/i.test(arg))) {
                 throw new Error(`The runtime selection controls ${arg}. Remove the conflicting task argument so builds and debugging use the same runtime and output paths.`);
             }

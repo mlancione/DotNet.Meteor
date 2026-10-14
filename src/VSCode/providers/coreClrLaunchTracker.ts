@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 // Bound attachment independently of the experimental engine's remote listener.
 export class CoreClrLaunchTracker implements vscode.DebugAdapterTrackerFactory {
     public createDebugAdapterTracker(session: vscode.DebugSession): vscode.DebugAdapterTracker | undefined {
-        if (session.configuration.meteorRuntime !== 'coreclr') {
+        if (session.configuration.meteorRuntime !== 'coreclr' || session.configuration.meteorCSharpHotReload) {
             return undefined;
         }
         let deadline: NodeJS.Timeout | undefined;

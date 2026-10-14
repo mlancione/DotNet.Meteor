@@ -11,6 +11,9 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
     async resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined,
         config: vscode.DebugConfiguration,
         token?: vscode.CancellationToken): Promise<vscode.DebugConfiguration | undefined> {
+        if (token?.isCancellationRequested) {
+            return undefined;
+        }
         ConfigurationController.profiler = config.profilerMode;
         ConfigurationController.noDebug = config.noDebug;
         if (!ConfigurationController.isActive() || !ConfigurationController.isValid()) {
@@ -54,7 +57,7 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             config.targetFramework = ConfigurationController.getTargetFramework();
             config.meteorRuntime = build.runtime ?? 'mono';
             if (build.runtime === 'coreclr') {
-                return configureCoreClr(config, build);
+                return await configureCoreClr(config, build, token);
             }
             config.transportId = ExternalTypeResolver.feature.transportId;
             config.skipDebug = ConfigurationController.noDebug;
@@ -65,6 +68,9 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             config.debuggerOptions = ConfigurationController.getDebuggerOptions();
             return config;
         } catch (error) {
+            if (token?.isCancellationRequested) {
+                return undefined;
+            }
             vscode.window.showErrorMessage(`.NET Meteor: ${String(error)}`);
             return undefined;
         }

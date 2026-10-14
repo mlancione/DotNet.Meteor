@@ -5,7 +5,7 @@ import { Project } from '../models/project';
 import { ProjectItem } from '../models/projectItem';
 import { Device } from '../models/device';
 import { supportsFramework } from '../models/deviceSelection';
-import { getRuntimePreference, runtimeChoices, selectMobileRuntime } from '../models/runtimeSelection';
+import { getRuntimePreference, getCoreClrDebugger, runtimeChoices, selectMobileRuntime } from '../models/runtimeSelection';
 import { DeviceItem } from '../models/deviceItem';
 import { SeparatorItem } from '../models/separatorItem';
 import { Icons } from '../resources/icons';
@@ -75,9 +75,10 @@ export class StatusBarController {
         StatusBarController.runtimeStatusItem.command = res.commandIdSelectRuntime;
         context.subscriptions.push(StatusBarController.runtimeStatusItem);
         context.subscriptions.push(vscode.commands.registerCommand(res.commandIdSelectRuntime, StatusBarController.showQuickPickRuntime));
+        context.subscriptions.push(vscode.commands.registerCommand('dotnet-meteor.selectCoreClrDebugger', StatusBarController.showQuickPickCoreClrDebugger));
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
             if (event.affectsConfiguration('dotnetMeteor.runtime') || event.affectsConfiguration('dotnetMeteor.dotnetPath')
-                || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun')) {
+                || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun') || event.affectsConfiguration('dotnetMeteor.coreClrDebugger')) {
                 StatusBarController.updateRuntimeStatusBarItem();
                 void StatusBarController.updateDeviceStatusBarItem();
             }
@@ -92,7 +93,8 @@ export class StatusBarController {
         }
         const preference = getRuntimePreference(vscode.workspace.getConfiguration(res.configId).get('runtime'));
         const choice = runtimeChoices.find(candidate => candidate.preference === preference)!;
-        item.text = `$(debug) ${choice.label}`;
+        const backend = getCoreClrDebugger(vscode.workspace.getConfiguration(res.configId).get('coreClrDebugger'));
+        item.text = `$(debug) ${choice.label}${preference === 'coreclr' && backend === 'microsoft' ? ' · Microsoft' : ''}`;
         item.tooltip = `Meteor runtime: ${choice.label}. Click to change the global extension setting. ${choice.description}.`;
         item.backgroundColor = undefined;
         const framework = ConfigurationController.getTargetFramework();
@@ -108,7 +110,7 @@ export class StatusBarController {
     }
 
     public static async showQuickPickRuntime() {
-        if (vscode.debug.activeDebugSession?.type === res.debuggerMeteorId) {
+        if (vscode.debug.activeDebugSession?.type === res.debuggerMeteorId || vscode.debug.activeDebugSession?.configuration?.meteorRuntime === 'coreclr') {
             vscode.window.showInformationMessage('Stop the active Meteor session before changing its runtime.');
             return;
         }
@@ -118,6 +120,22 @@ export class StatusBarController {
         const selected = await vscode.window.showQuickPick(items, { placeHolder: 'Select the runtime for Meteor builds and debugging (global setting)' });
         if (selected) {
             await vscode.workspace.getConfiguration(res.configId).update('runtime', selected.preference, vscode.ConfigurationTarget.Global);
+            StatusBarController.updateRuntimeStatusBarItem();
+        }
+    }
+
+    public static async showQuickPickCoreClrDebugger() {
+        if (vscode.debug.activeDebugSession?.configuration?.meteorRuntime === 'coreclr') {
+            vscode.window.showInformationMessage('Stop the active CoreCLR session before changing its debugger.');
+            return;
+        }
+        const backend = getCoreClrDebugger(vscode.workspace.getConfiguration(res.configId).get('coreClrDebugger'));
+        const selected = await vscode.window.showQuickPick([
+            { label: 'Meteor (clrdbg)', backend: 'meteor', description: 'Bundled CoreCLR backend', picked: backend === 'meteor' },
+            { label: 'Microsoft (vsdbg)', backend: 'microsoft', description: 'Installed Microsoft C#/MAUI mobile debugger; local iOS simulators', picked: backend === 'microsoft' }
+        ], { placeHolder: 'Select the CoreCLR F5 debugger (global setting)' });
+        if (selected) {
+            await vscode.workspace.getConfiguration(res.configId).update('coreClrDebugger', selected.backend, vscode.ConfigurationTarget.Global);
             StatusBarController.updateRuntimeStatusBarItem();
         }
     }

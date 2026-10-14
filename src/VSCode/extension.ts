@@ -1,4 +1,5 @@
 import { MonoDebugAdapterFactory } from './providers/monoDebugAdapterFactory';
+import { MicrosoftCoreClrLaunchTracker } from './providers/microsoftCoreClrLaunchTracker';
 import { CoreClrLaunchTracker } from './providers/coreClrLaunchTracker';
 import { MonoDebugConfigurationProvider } from './providers/monoDebugConfigurationProvider';
 import { DotNetTaskProvider } from './providers/dotnetTaskProvider';
@@ -30,6 +31,8 @@ export function activate(context: vscode.ExtensionContext) {
 	RemoteHostProvider.feature.activate(context);
 
 	context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory(res.debuggerMeteorId, new MonoDebugAdapterFactory()));
+	const microsoftTracker = new MicrosoftCoreClrLaunchTracker();
+	context.subscriptions.push(microsoftTracker, vscode.debug.registerDebugAdapterTrackerFactory('coreclr_mobile', microsoftTracker));
 	context.subscriptions.push(vscode.debug.registerDebugAdapterTrackerFactory(res.debuggerMeteorId, new CoreClrLaunchTracker()));
 	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider(res.debuggerMeteorId, new MonoDebugConfigurationProvider()));
 	context.subscriptions.push(vscode.tasks.registerTaskProvider(res.taskDefinitionId, new DotNetTaskProvider()));

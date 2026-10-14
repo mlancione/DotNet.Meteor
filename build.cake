@@ -6,7 +6,7 @@ public string ArtifactsDirectory => _Path.Combine(RootDirectory, "artifacts");
 public string ExtensionStagingDirectory => _Path.Combine(RootDirectory, "extension");
 
 var target = Argument("target", "vsix");
-var version = Argument("release-version", "6.3.1");
+var version = Argument("release-version", "6.3.3");
 var configuration = Argument("configuration", "debug");
 var runtime = Argument("arch", RuntimeInformation.RuntimeIdentifier);
 
@@ -101,6 +101,7 @@ Task("coreclr").Does(() => {
 	CopyFile(_Path.Combine(RootDirectory, "third-party", "clrdbg-LICENSE.txt"), _Path.Combine(adapterDirectory, "LICENSE.txt"));
 	CopyFile(manifestPath, _Path.Combine(adapterDirectory, "upstream.json"));
 	CopyFile(_Path.Combine(RootDirectory, "src", "VSCode", "resources", "coreclr-adapter.cjs"), _Path.Combine(ExtensionStagingDirectory, "coreclr-adapter.cjs"));
+	CopyFile(_Path.Combine(RootDirectory, "src", "VSCode", "resources", "coreclr-hotreload.cjs"), _Path.Combine(ExtensionStagingDirectory, "coreclr-hotreload.cjs"));
 });
 
 

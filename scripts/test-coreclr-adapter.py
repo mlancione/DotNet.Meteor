@@ -79,13 +79,23 @@ class Protocol:
 def check_agent_targets(root, temporary, dotnet):
     targets = root / "src/VSCode/resources/CoreClr.targets"
     remote = root / "extension/bin/Remote/remote-target"
-    for family, rid in [("ios", "iossimulator-arm64"), ("ios", "iossimulator-x64"), ("ios", "ios-arm64"),
-                        ("maccatalyst", "maccatalyst-arm64"), ("maccatalyst", "maccatalyst-x64"), ("android", "android-arm64"), ("android", "android-x64")]:
+    cases = [("ios", "iossimulator-arm64"), ("ios", "iossimulator-x64"), ("ios", "ios-arm64"),
+                        ("maccatalyst", "maccatalyst-arm64"), ("maccatalyst", "maccatalyst-x64"), ("android", "android-arm64"), ("android", "android-x64")]
+    microsoft = temporary / "external-microsoft-target"
+    for rid in ("iossimulator-arm64", "iossimulator-x64"):
+        agent = microsoft / "ios" / rid / "libvsdbgremotecoreclrtarget.dylib"
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_bytes(b"MSBuild packaging fixture; no Microsoft binary")
+    for family, rid, backend in [(family, rid, "meteor") for family, rid in cases] + [
+            ("ios", "iossimulator-arm64", "microsoft"), ("ios", "iossimulator-x64", "microsoft")]:
+        agent_name = "libvsdbgremotecoreclrtarget.dylib" if backend == "microsoft" else "libremotecoreclrtarget.dylib"
         project = ET.Element("Project")
         properties = ET.SubElement(project, "PropertyGroup")
         for key, value in {"TargetPlatformIdentifier": family, "RuntimeIdentifier": rid,
-                           "RemoteCoreclrTargetDir": str(remote), "AndroidAttachDebugger": "true"}.items():
+                           "RemoteCoreclrTargetDir": str(microsoft if backend == "microsoft" else remote), "AndroidAttachDebugger": "true"}.items():
             ET.SubElement(properties, key).text = value
+        if backend == "microsoft":
+            ET.SubElement(properties, "MeteorCoreClrAgentName").text = agent_name
         ET.SubElement(project, "Import", Project=str(targets))
         ET.SubElement(project, "Target", Name="PrepareForBuild")
         target = ET.SubElement(project, "Target", Name="_ComputePublishLocation")
@@ -95,10 +105,12 @@ def check_agent_targets(root, temporary, dotnet):
         if family != "android":
             ET.SubElement(target, "Error", Condition="'%(ResolvedFileToPublish.PublishFolderType)' != 'DynamicLibrary'",
                           Text="Apple agent must be packaged as a dynamic library")
-        filename = temporary / f"{rid}.proj"
+            ET.SubElement(target, "Error", Condition=f"'%(ResolvedFileToPublish.RelativePath)' != '{agent_name}'",
+                          Text="Agent bundle name must match selected backend")
+        filename = temporary / f"{backend}-{rid}.proj"
         ET.ElementTree(project).write(filename, encoding="unicode")
         subprocess.run([dotnet, "msbuild", str(filename), "-t:PrepareForBuild;_ComputePublishLocation", "-nologo", "-verbosity:quiet"], check=True, timeout=30)
-    print("Passed seven mobile agent packaging checks (MSBuild only).", flush=True)
+    print("Passed nine mobile agent packaging checks, including external Microsoft target fixtures (MSBuild only).", flush=True)
 
 
 def smoke(root, temporary, dotnet):
