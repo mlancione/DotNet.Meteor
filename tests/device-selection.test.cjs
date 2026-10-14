@@ -13,6 +13,13 @@ require.extensions['.ts'] = (module, filename) => {
 };
 let selected;
 const vscode = {
+    EventEmitter: class {
+        listeners = new Set();
+        event = callback => { this.listeners.add(callback); return { dispose: () => this.listeners.delete(callback) }; };
+        fire(value) { for (const callback of this.listeners) { callback(value); } }
+        dispose() { this.listeners.clear(); }
+    },
+    workspace: { getConfiguration: () => ({ get: () => undefined }) },
     ThemeIcon: class {}, QuickPickItemKind: { Separator: -1 },
     window: { showQuickPick: async items => items.find(item => item.label === selected) }
 };

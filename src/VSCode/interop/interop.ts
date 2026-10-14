@@ -124,6 +124,7 @@ export class Interop {
             .append('msbuild', project.path, '-getProperty:UseMonoRuntime,PublishAot,CustomAfterMicrosoftCommonTargets,CustomBeforeMicrosoftCommonProps')
             .append(`-p:TargetFramework=${framework}`)
             .conditional(`-p:Configuration=${configuration}`, () => configuration)
+            .conditional(`-p:Platform=${ConfigurationController.microsoftPlatform}`, () => ConfigurationController.microsoftPlatform)
             .conditional(`-p:RuntimeIdentifier=${device?.runtime_id}`, () => device?.runtime_id), tools);
         if (output === undefined) {
             throw new Error(`Could not evaluate the runtime for ${framework}. Check dotnetMeteor.dotnetPath (or coreClrDotnetPath), global.json and the installed workloads. See the extension host output for SDK diagnostics.`);
@@ -140,12 +141,14 @@ export class Interop {
         const debuggerBackend = runtime === 'coreclr' && !csharpHotReload
             ? getCoreClrDebugger(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrDebugger')) : 'meteor';
         const microsoftDebugger = debuggerBackend === 'microsoft' ? getMicrosoftDebuggerPaths(device) : undefined;
+        const platformProperties = debuggerBackend === 'microsoft' && ConfigurationController.microsoftPlatform
+            ? [`-p:Platform=${ConfigurationController.microsoftPlatform}`] : [];
         return { tools, runtime, csharpHotReload, debuggerBackend, microsoftDebugger, properties: getRuntimeBuildProperties(runtime, preference,
             path.join(Interop.extensionPath, 'extension', 'CoreClr.targets'),
             microsoftDebugger?.target ?? path.join(Interop.extensionPath, 'extension', 'bin', 'Remote', 'remote-target'),
             properties.CustomAfterMicrosoftCommonTargets, properties.CustomBeforeMicrosoftCommonProps,
             runtime === 'coreclr' ? getCoreClrReadyToRunPreference(vscode.workspace.getConfiguration('dotnetMeteor').get('coreClrReadyToRun')) : undefined,
-            csharpHotReload, debuggerBackend) };
+            csharpHotReload, debuggerBackend).concat(platformProperties) };
     }
 
     public static getProjectToolContext(project: Project, configuration: string, device: Device | undefined,

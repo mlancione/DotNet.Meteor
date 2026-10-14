@@ -4,6 +4,7 @@ import { spawn, execFile, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
 import { debuggerComponentHash } from '../interop/microsoftDebugger';
+import { csharpProjectSystem } from '../interop/csharpProjectSystem';
 
 const execFileAsync = promisify(execFile);
 
@@ -85,6 +86,13 @@ export class MicrosoftCoreClrLaunchTracker implements vscode.DebugAdapterTracker
             }
             started = true;
             try {
+                const baseline = session.configuration.meteorCSharpBaseline;
+                if (baseline) {
+                    await csharpProjectSystem.validateBaseline(baseline.project, baseline.framework, baseline.target, baseline.assets, baseline.sdk);
+                    if (stopping) {
+                        return;
+                    }
+                }
                 if (!config || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(config.device ?? '')
                     || !path.isAbsolute(config.app ?? '') || !fs.existsSync(config.app)
                     || !path.isAbsolute(config.mlaunch ?? '') || !fs.existsSync(config.mlaunch)) {

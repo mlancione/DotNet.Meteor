@@ -6,6 +6,9 @@ import { ExternalTypeResolver } from '../features/externalTypeResolver';
 import { configureCoreClr } from './coreClrConfiguration';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
+import { StateController } from '../controllers/stateController';
+import { StatusBarController } from '../controllers/statusbarController';
+import { csharpProjectSystem, debuggerHotReloadEnabled } from '../interop/csharpProjectSystem';
 
 export class MonoDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
     async resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined,
@@ -15,11 +18,22 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             return undefined;
         }
         ConfigurationController.profiler = config.profilerMode;
+        const previousNoDebug = ConfigurationController.noDebug;
         ConfigurationController.noDebug = config.noDebug;
-        if (!ConfigurationController.isActive() || !ConfigurationController.isValid()) {
+        if (!ConfigurationController.isActive()) {
             return undefined;
         }
         try {
+            if (previousNoDebug !== ConfigurationController.noDebug) {
+                StatusBarController.performSelectConfiguration(StateController.getConfiguration());
+            }
+            await StatusBarController.synchronizeMicrosoftConfiguration();
+            if (token?.isCancellationRequested) {
+                return undefined;
+            }
+            if (!ConfigurationController.isValid()) {
+                return undefined;
+            }
             if (!config.type && !config.request && !config.name) {
                 config.preLaunchTask = `${res.extensionId}: ${res.taskDefinitionDefaultTargetCapitalized}`;
                 config.name = res.debuggerMeteorTitle;
@@ -32,10 +46,20 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             if (config.configuration === undefined) {
                 config.configuration = ConfigurationController.configuration;
             }
+            if (ConfigurationController.usesMicrosoftConfiguration() && config.configuration !== ConfigurationController.configuration) {
+                throw new Error('The Microsoft backend uses C# Dev Kit\'s active configuration. Remove the conflicting launch.json configuration or select it in C# Dev Kit and reload VS Code.');
+            }
             if (config.device === undefined) {
                 config.device = ConfigurationController.device;
             }
             const build = Interop.getBuildContext(config.project, config.configuration, config.device);
+            if (build.debuggerBackend === 'microsoft' && debuggerHotReloadEnabled()) {
+                const baseline = { project: config.project.path, framework: ConfigurationController.getTargetFramework()!,
+                    target: Interop.getPropertyValue('TargetPath', config.project, config.configuration, config.device, build) ?? '',
+                    assets: Interop.getPropertyValue('ProjectAssetsFile', config.project, config.configuration, config.device, build) ?? '', sdk: build.tools.executable };
+                await csharpProjectSystem.validateBaseline(baseline.project, baseline.framework, baseline.target, baseline.assets, baseline.sdk);
+                config.meteorCSharpBaseline = baseline;
+            }
             if (config.program === undefined) {
                 config.program = ConfigurationController.getProgramPath(config.project, config.configuration, config.device, build);
             }
@@ -71,7 +95,19 @@ export class MonoDebugConfigurationProvider implements vscode.DebugConfiguration
             if (token?.isCancellationRequested) {
                 return undefined;
             }
-            vscode.window.showErrorMessage(`.NET Meteor: ${String(error)}`);
+            if (ConfigurationController.usesMicrosoftConfiguration()) {
+                void Promise.resolve(vscode.window.showErrorMessage(`.NET Meteor: ${String(error)}`,
+                    'Select C# configuration', 'Select target framework')).then(choice => {
+                    if (choice === 'Select C# configuration') {
+                        return StatusBarController.showQuickPickConfiguration();
+                    }
+                    if (choice === 'Select target framework') {
+                        return StatusBarController.showQuickPickFramework();
+                    }
+                }).catch(error => console.error(error));
+            } else {
+                vscode.window.showErrorMessage(`.NET Meteor: ${String(error)}`);
+            }
             return undefined;
         }
     }

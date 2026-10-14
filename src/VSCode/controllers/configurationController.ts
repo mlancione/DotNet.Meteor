@@ -14,11 +14,28 @@ export class ConfigurationController {
     public static project: Project | undefined;
     public static device: Device | undefined;
     public static configuration: string | undefined;
+    public static microsoftPlatform: string | undefined;
     public static targetFramework: string | undefined;
 
     public static onWindows: boolean = process.platform === 'win32';
     public static onLinux: boolean = process.platform === 'linux';
     public static onMac: boolean = process.platform === 'darwin';
+
+    public static usesMicrosoftConfiguration(): boolean {
+        const settings = vscode.workspace.getConfiguration(res.configId);
+        if (settings.get('coreClrDebugger') !== 'microsoft' || settings.get('runtime') === 'mono'
+            || !ConfigurationController.getTargetFramework()?.includes('-ios')) {
+            return false;
+        }
+        if (ConfigurationController.noDebug && settings.get('coreClrHotReload')) {
+            return false;
+        }
+        if (settings.get('runtime') === 'coreclr') {
+            return true;
+        }
+        // Supported .NET 11+ iOS targets use CoreCLR; .NET 10/Mono stays independent.
+        return Number(ConfigurationController.getTargetFramework()?.match(/^net(\d+)\./)?.[1]) >= 11;
+    }
 
     public static activate(context: vscode.ExtensionContext) {
         ConfigurationController.androidSdkDirectory = Interop.getAndroidSdk();

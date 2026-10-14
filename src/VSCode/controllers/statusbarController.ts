@@ -11,12 +11,14 @@ import { SeparatorItem } from '../models/separatorItem';
 import { Icons } from '../resources/icons';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
+import { csharpProjectSystem } from '../interop/csharpProjectSystem';
 
 export class StatusBarController {
     private static projectStatusItem: vscode.StatusBarItem | undefined;
     private static targetStatusItem: vscode.StatusBarItem | undefined;
     private static deviceStatusItem: vscode.StatusBarItem | undefined;
     private static runtimeStatusItem: vscode.StatusBarItem | undefined;
+    private static frameworkStatusItem: vscode.StatusBarItem | undefined;
 
     private static deviceRefresh = 0;
     private static projectRefresh = 0;
@@ -31,6 +33,12 @@ export class StatusBarController {
         StatusBarController.createProjectStatusBarItem(context);
         StatusBarController.createConfigurationStatusBarItem(context);
         StatusBarController.createDeviceStatusBarItem(context);
+        context.subscriptions.push(csharpProjectSystem, csharpProjectSystem.onDidChange(() => {
+            if (ConfigurationController.usesMicrosoftConfiguration()) {
+                StatusBarController.performSelectConfiguration();
+                void StatusBarController.updateDeviceStatusBarItem();
+            }
+        }));
 
         context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(_ => {
             StatusBarController.updateProjectStatusBarItem();
@@ -62,6 +70,10 @@ export class StatusBarController {
         StatusBarController.targetStatusItem.command = res.commandIdSelectActiveConfiguration;
         context.subscriptions.push(StatusBarController.targetStatusItem);
         context.subscriptions.push(vscode.commands.registerCommand(res.commandIdSelectActiveConfiguration, StatusBarController.showQuickPickConfiguration));
+        StatusBarController.frameworkStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 89);
+        StatusBarController.frameworkStatusItem.command = 'dotnet-meteor.selectTargetFramework';
+        context.subscriptions.push(StatusBarController.frameworkStatusItem,
+            vscode.commands.registerCommand('dotnet-meteor.selectTargetFramework', StatusBarController.showQuickPickFramework));
     }
     private static createDeviceStatusBarItem(context: vscode.ExtensionContext) {
         StatusBarController.deviceStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 80);
@@ -80,6 +92,8 @@ export class StatusBarController {
             if (event.affectsConfiguration('dotnetMeteor.runtime') || event.affectsConfiguration('dotnetMeteor.dotnetPath')
                 || event.affectsConfiguration('dotnetMeteor.coreClrDotnetPath') || event.affectsConfiguration('dotnetMeteor.coreClrReadyToRun') || event.affectsConfiguration('dotnetMeteor.coreClrDebugger')) {
                 StatusBarController.updateRuntimeStatusBarItem();
+                StatusBarController.performSelectConfiguration(StateController.getConfiguration());
+                void StatusBarController.synchronizeMicrosoftConfiguration().catch(error => console.error(error));
                 void StatusBarController.updateDeviceStatusBarItem();
             }
         }));
@@ -208,17 +222,50 @@ export class StatusBarController {
             StatusBarController.projectStatusItem.text = `${Icons.project} ${ConfigurationController.project?.name ?? ''}`;
         StateController.saveProject();
         StatusBarController.performSelectConfiguration(StateController.getConfiguration());
+        void StatusBarController.synchronizeMicrosoftConfiguration().catch(error => console.error(error));
         StateController.saveFramework();
         StatusBarController.restoreDevice();
         void StatusBarController.updateDeviceStatusBarItem();
     }
     public static performSelectConfiguration(item: string | undefined = undefined) {
+        if (ConfigurationController.usesMicrosoftConfiguration() && ConfigurationController.project) {
+            const active = csharpProjectSystem.configuration(ConfigurationController.project.path);
+            ConfigurationController.configuration = active?.name;
+            ConfigurationController.microsoftPlatform = active?.platform.replace(/\s/g, '');
+            if (StatusBarController.targetStatusItem) {
+                StatusBarController.targetStatusItem.text = `${Icons.target} ${active ? `${active.name} (C#)` : csharpProjectSystem.failure ? 'C# configuration unavailable' : 'C# configuration loading…'}`;
+                StatusBarController.targetStatusItem.tooltip = csharpProjectSystem.failure ?? 'Build configuration comes from C# Dev Kit. Click to select it there; a window reload applies the change.';
+            }
+            if (StatusBarController.frameworkStatusItem) {
+                StatusBarController.frameworkStatusItem.text = `${Icons.target} ${ConfigurationController.getTargetFramework() ?? ''}`;
+                StatusBarController.frameworkStatusItem.tooltip = 'Select the target framework for Meteor builds and debugging.';
+                StatusBarController.frameworkStatusItem.show();
+            }
+            return;
+        }
+        ConfigurationController.microsoftPlatform = undefined;
+        StatusBarController.frameworkStatusItem?.hide();
         const configurations = ConfigurationController.project?.configurations ?? [];
         ConfigurationController.configuration = item ?? configurations.find(value => value === 'Debug') ?? configurations[0];
-        if (StatusBarController.targetStatusItem !== undefined)
+        if (StatusBarController.targetStatusItem !== undefined) {
             StatusBarController.targetStatusItem.text = `${Icons.target} ${ConfigurationController.configuration ?? ''} | ${ConfigurationController.getTargetFramework() ?? ''}`;
+            StatusBarController.targetStatusItem.tooltip = res.commandTitleSelectActiveConfiguration;
+        }
         StateController.saveConfiguration();
         StatusBarController.updateRuntimeStatusBarItem();
+    }
+    public static async synchronizeMicrosoftConfiguration(): Promise<void> {
+        if (!ConfigurationController.usesMicrosoftConfiguration() || !ConfigurationController.project) {
+            return;
+        }
+        const project = ConfigurationController.project;
+        const active = await csharpProjectSystem.ready(project.path);
+        if (project === ConfigurationController.project && ConfigurationController.usesMicrosoftConfiguration()) {
+            if (!project.configurations.includes(active.name)) {
+                throw new Error(`C# Dev Kit selected ${active.name}, which the selected project does not declare. Select a supported configuration in C# Dev Kit.`);
+            }
+            StatusBarController.performSelectConfiguration();
+        }
     }
     public static performSelectFramework(framework: string) {
         if (!ConfigurationController.project?.frameworks.includes(framework))
@@ -276,6 +323,14 @@ export class StatusBarController {
         }
     }
     public static async showQuickPickConfiguration() {
+        if (ConfigurationController.usesMicrosoftConfiguration()) {
+            if (vscode.debug.activeDebugSession?.configuration?.meteorCoreClrDebugger === 'microsoft') {
+                vscode.window.showInformationMessage('Stop the active Microsoft debug session before changing the C# configuration; Dev Kit applies changes on reload.');
+                return;
+            }
+            await vscode.commands.executeCommand('csdevkit.selectActiveConfiguration');
+            return;
+        }
         const project = ConfigurationController.project;
         const items = (project?.configurations ?? []).flatMap(configuration =>
             (project?.frameworks ?? []).map(framework => ({
@@ -285,6 +340,13 @@ export class StatusBarController {
         if (selected !== undefined) {
             StatusBarController.performSelectConfiguration(selected.configuration);
             StatusBarController.performSelectFramework(selected.framework);
+        }
+    }
+    public static async showQuickPickFramework() {
+        const frameworks = ConfigurationController.project?.frameworks ?? [];
+        const selected = await vscode.window.showQuickPick(frameworks, { placeHolder: 'Select the target framework for Meteor' });
+        if (selected) {
+            StatusBarController.performSelectFramework(selected);
         }
     }
     public static async showQuickPickDevice() {

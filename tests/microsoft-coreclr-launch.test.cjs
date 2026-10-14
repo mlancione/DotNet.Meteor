@@ -32,6 +32,12 @@ const childProcess = {
     }
 };
 const vscode = {
+    EventEmitter: class {
+        listeners = new Set();
+        event = callback => { this.listeners.add(callback); return { dispose: () => this.listeners.delete(callback) }; };
+        fire(value) { for (const callback of this.listeners) { callback(value); } }
+        dispose() { this.listeners.clear(); }
+    },
     window: { createOutputChannel: () => ({ append: value => messages.push(value), dispose() {} }), showErrorMessage: value => errors.push(value) },
     debug: { stopDebugging: async session => stopped.push(session) }
 };
@@ -123,4 +129,16 @@ test('agent re-signing is accepted when source snapshot and Mach-O UUID match', 
 });
 test('different target Mach-O UUID prevents app launch even when source hash matches', async () => {
     uuidMismatch = true; ready(tracker()); await flush(); assert.equal(spawns.length, 0); assert.match(errors[0], /different Microsoft target library/);
+});
+
+test('a changed C# baseline after the prelaunch build prevents simulator startup', async () => {
+    const { csharpProjectSystem } = require('../src/VSCode/interop/csharpProjectSystem.ts');
+    const original = csharpProjectSystem.validateBaseline;
+    const s = session('baseline'); s.configuration.meteorCSharpBaseline = { project:'App.csproj' };
+    csharpProjectSystem.validateBaseline = async () => { throw new Error('referenced library baseline changed'); };
+    try {
+        ready(tracker(s)); await flush();
+        assert.equal(spawns.length,0); assert.match(errors[0],/referenced library baseline/);
+        assert.deepEqual(stopped,[s]);
+    } finally { csharpProjectSystem.validateBaseline = original; }
 });

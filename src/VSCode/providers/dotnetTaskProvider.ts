@@ -5,18 +5,35 @@ import { RemoteHostProvider } from '../features/removeHostProvider';
 import { getCoreClrPaths } from '../interop/coreClr';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
+import { StatusBarController } from '../controllers/statusbarController';
+import { csharpProjectSystem, debuggerHotReloadEnabled } from '../interop/csharpProjectSystem';
 
 
 export class DotNetTaskProvider implements vscode.TaskProvider {
     resolveTask(task: vscode.Task, token: vscode.CancellationToken): vscode.ProviderResult<vscode.Task> { 
         return ConfigurationController.isActive() ? this.getTask(task.definition) : task;
     }
-    provideTasks(token: vscode.CancellationToken): vscode.ProviderResult<vscode.Task[]> {
-        return ConfigurationController.isActive() ? [this.getTask({ type: res.taskDefinitionId })] : undefined;
+    async provideTasks(token: vscode.CancellationToken): Promise<vscode.Task[] | undefined> {
+        return ConfigurationController.isActive() ? [await this.getTask({ type: res.taskDefinitionId })] : undefined;
     }
 
-    private getTask(definition: vscode.TaskDefinition): vscode.Task {
+    private async getTask(definition: vscode.TaskDefinition): Promise<vscode.Task> {
         try {
+            await StatusBarController.synchronizeMicrosoftConfiguration();
+            if (ConfigurationController.usesMicrosoftConfiguration() && debuggerHotReloadEnabled()) {
+                const project = ConfigurationController.project!;
+                const configuration = ConfigurationController.configuration!;
+                const device = ConfigurationController.device!;
+                const framework = ConfigurationController.getTargetFramework()!;
+                const build = Interop.getBuildContext(project, configuration, device);
+                await csharpProjectSystem.validateBaseline(project.path, framework,
+                    Interop.getPropertyValue('TargetPath', project, configuration, device, build) ?? '',
+                    Interop.getPropertyValue('ProjectAssetsFile', project, configuration, device, build) ?? '', build.tools.executable);
+                if (project !== ConfigurationController.project || configuration !== ConfigurationController.configuration
+                    || device !== ConfigurationController.device || framework !== ConfigurationController.getTargetFramework()) {
+                    throw new Error('Meteor selection changed during C# project validation. Retry the build.');
+                }
+            }
             return this.getBuildTask(definition);
         } catch (error) {
             // Keep the task registered even when its runtime/toolchain is not ready.
@@ -85,7 +102,7 @@ export class DotNetTaskProvider implements vscode.TaskProvider {
             RemoteHostProvider.feature.connect(builder);
 
         definition.args?.forEach((arg: string) => {
-            if ((build.runtime === 'coreclr' && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])(UseMonoRuntime|PublishReadyToRun|EnableDiagnostics|BaseIntermediateOutputPath|BaseOutputPath|CustomAfterMicrosoftCommonTargets|CustomBeforeMicrosoftCommonProps|RemoteCoreclrTargetDir|MeteorCoreClrAgentName|TrimMode|MtouchLink|Registrar|HotReloadCompatibleBuild|DebuggerSupport|Optimize|DebugSymbols|DebugType|MeteorOriginalAfterTargets|MeteorOriginalBeforeProps|TargetFramework|TargetFrameworks|RuntimeIdentifier|Configuration|OutputPath|IntermediateOutputPath|MSBuildProjectExtensionsPath|MtouchDebug|_BundlerDebug)\s*=/i.test(arg))
+            if ((build.runtime === 'coreclr' && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])(UseMonoRuntime|PublishReadyToRun|EnableDiagnostics|BaseIntermediateOutputPath|BaseOutputPath|CustomAfterMicrosoftCommonTargets|CustomBeforeMicrosoftCommonProps|RemoteCoreclrTargetDir|MeteorCoreClrAgentName|TrimMode|MtouchLink|Registrar|HotReloadCompatibleBuild|DebuggerSupport|Optimize|DebugSymbols|DebugType|MeteorOriginalAfterTargets|MeteorOriginalBeforeProps|TargetFramework|TargetFrameworks|RuntimeIdentifier|Configuration|Platform|OutputPath|IntermediateOutputPath|MSBuildProjectExtensionsPath|MtouchDebug|_BundlerDebug)\s*=/i.test(arg))
                 || (build.properties.includes('-p:UseMonoRuntime=true') && /^[-/](?:p|property):/i.test(arg) && /(?:^[-/](?:p|property):|[;,])UseMonoRuntime\s*=/i.test(arg))) {
                 throw new Error(`The runtime selection controls ${arg}. Remove the conflicting task argument so builds and debugging use the same runtime and output paths.`);
             }

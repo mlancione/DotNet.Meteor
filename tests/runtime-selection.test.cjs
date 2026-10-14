@@ -22,6 +22,7 @@ const vscode = {
         showQuickPick: async items => selected === undefined ? undefined : items.find(item => item.preference === selected || item.backend === selected),
         showErrorMessage: value => errors.push(value), showInformationMessage: value => errors.push(value)
     },
+    commands: { executeCommand: async (...args) => calls.push({ command: args[0], args: args.slice(1) }) },
     debug: { get activeDebugSession() { return activeSession; } },
     TaskScope: { Workspace: 1 },
     ShellExecution: class { constructor(command, args, options) { Object.assign(this, { command, args, options }); } },
@@ -46,6 +47,11 @@ const { getCoreClrPaths } = require('../src/VSCode/interop/coreClr.ts');
 const { ProcessRunner } = require('../src/VSCode/interop/processRunner.ts');
 const { ConfigurationController: config } = require('../src/VSCode/controllers/configurationController.ts');
 const { StatusBarController: status } = require('../src/VSCode/controllers/statusbarController.ts');
+const { StateController } = require('../src/VSCode/controllers/stateController.ts');
+const { csharpProjectSystem } = require('../src/VSCode/interop/csharpProjectSystem.ts');
+let csharpConfiguration;
+csharpProjectSystem.ready = async () => csharpConfiguration;
+csharpProjectSystem.configuration = () => csharpConfiguration;
 const { DotNetTaskProvider } = require('../src/VSCode/providers/dotnetTaskProvider.ts');
 const { MonoDebugConfigurationProvider } = require('../src/VSCode/providers/monoDebugConfigurationProvider.ts');
 const { MonoDebugAdapterFactory } = require('../src/VSCode/providers/monoDebugAdapterFactory.ts');
@@ -78,6 +84,7 @@ beforeEach(() => {
     };
     settings = { dotnetPath: executable, runtime: 'auto' };
     calls = []; properties = {}; errors = []; activeSession = undefined; selected = undefined;
+    csharpConfiguration = { name: 'Debug', platform: 'Any CPU' }; config.microsoftPlatform = undefined;
     config.project = { path: path.join(root, 'App.csproj'), frameworks: ['net10.0-ios', 'net11.0-ios27.0'], configurations: ['Debug'] };
     config.targetFramework = 'net10.0-ios'; config.configuration = 'Debug';
     config.noDebug = false; config.profiler = undefined;
@@ -129,16 +136,16 @@ test('picker cancellation and an active debug session leave the setting untouche
     activeSession = { type: 'dotnet-meteor.debugger' }; selected = 'coreclr';
     await status.showQuickPickRuntime(); assert.equal(calls.length, 0); assert.match(errors[0], /Stop the active/);
 });
-test('Mono default preserves existing output paths and build switches', () => {
+test('Mono default preserves existing output paths and build switches', async () => {
     properties.UseMonoRuntime = 'true';
-    const task = new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
+    const task = await new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
     assert.ok(task.execution.args.includes('-p:MtouchDebug=true'));
     assert.ok(!task.execution.args.some(arg => /meteor-coreclr|EnableDiagnostics|UseMonoRuntime/.test(arg)));
 });
-test('CoreCLR build and path evaluation share runtime, output paths, SDK host and cwd', () => {
+test('CoreCLR build and path evaluation share runtime, output paths, SDK host and cwd', async () => {
     settings.runtime = 'coreclr'; settings.coreClrDotnetPath = experimental;
     config.targetFramework = 'net11.0-ios27.0'; properties.UseMonoRuntime = 'false';
-    const task = new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
+    const task = await new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
     const build = Interop.getBuildContext(config.project, 'Debug', config.device);
     config.getProgramPath(config.project, 'Debug', config.device, build);
     const query = calls.find(call => call.args?.includes('-getProperty:TargetPath'));
@@ -161,7 +168,7 @@ test('build preflight rejects incompatible targets and conflicting runtime argum
 });
 test('unavailable runtime stays a registered task and fails with its prerequisite', async () => {
     settings.runtime = 'coreclr';
-    const task = new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
+    const task = await new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
     assert.ok(task.execution instanceof vscode.CustomExecution);
     const terminal = await task.execution.callback();
     const output = [], exits = [];
@@ -439,4 +446,56 @@ test('Microsoft x64 simulator selection uses its matching external target and ar
     const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, { type: 'dotnet-meteor.debugger', name: 'x64', request: 'launch' });
     assert.ok(launch, errors.join('\n')); assert.equal(launch.coreClrMobileDebuggerOptions.platform, 'ios;x64');
     assert.equal(launch.meteorMicrosoftLaunch.targetLibrary, file);
+});
+
+test('Microsoft follows the loaded C# configuration and platform instead of the saved Meteor choice', async () => {
+    selectMicrosoft(); config.project.configurations.push('DebugCoreCLR');
+    csharpConfiguration = { name: 'DebugCoreCLR', platform: 'x64' };
+    config.configuration = 'Debug';
+    await status.synchronizeMicrosoftConfiguration();
+    assert.equal(config.configuration, 'DebugCoreCLR'); assert.equal(config.microsoftPlatform, 'x64');
+    const task = new DotNetTaskProvider().getBuildTask({ type:'dotnet-meteor.task' });
+    assert.ok(task.execution.args.includes('-p:Configuration=DebugCoreCLR'));
+    assert.ok(task.execution.args.includes('-p:Platform=x64'));
+});
+test('Microsoft configuration picker delegates to Dev Kit without an independent QuickPick', async () => {
+    selectMicrosoft(); await status.showQuickPickConfiguration();
+    assert.deepEqual(calls, [{ command:'csdevkit.selectActiveConfiguration', args:[] }]);
+});
+test('explicit launch configuration cannot override the C# configuration', async () => {
+    selectMicrosoft();
+    const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+        type:'dotnet-meteor.debugger', name:'Microsoft', request:'launch', configuration:'Release'
+    });
+    assert.equal(launch, undefined); assert.match(errors.at(-1), /conflicting launch.json/);
+});
+test('Mono and SDK-watch do not consume the C# configuration', async () => {
+    settings.runtime = 'mono'; settings.coreClrDebugger = 'microsoft';
+    config.configuration = 'Debug'; csharpConfiguration = { name:'Release', platform:'x64' };
+    await status.synchronizeMicrosoftConfiguration(); assert.equal(config.configuration,'Debug');
+    selectMicrosoft(); config.noDebug = true; settings.coreClrHotReload = true;
+    await status.synchronizeMicrosoftConfiguration(); assert.equal(config.configuration,'Debug');
+});
+
+test('switching Microsoft F5 to SDK-watch restores the independent Meteor configuration', async () => {
+    selectMicrosoft(); settings.coreClrHotReload = true;
+    config.project.configurations.push('DebugCoreCLR'); status.projects = [config.project];
+    const saved = new Map([['project', config.project.path], ['target', 'DebugCoreCLR']]);
+    StateController.activate({ workspaceState: { get: key => saved.get(key), update: (key,value) => saved.set(key,value) } });
+    try {
+        await status.synchronizeMicrosoftConfiguration();
+        assert.equal(config.configuration, 'Debug'); assert.equal(saved.get('target'), 'DebugCoreCLR');
+        config.device.serial = '22B78AE6-35E0-4A03-AF72-DE7071E90F65';
+        const launch = await new MonoDebugConfigurationProvider().resolveDebugConfiguration(undefined, {
+            type:'dotnet-meteor.debugger', name:'watch', request:'launch', noDebug:true
+        });
+        assert.ok(launch, errors.join('\n'));
+        assert.equal(config.configuration, 'DebugCoreCLR'); assert.equal(config.microsoftPlatform, undefined);
+        assert.ok(launch.meteorCSharpHotReload.args.includes('--configuration'));
+        assert.ok(launch.meteorCSharpHotReload.args.includes('DebugCoreCLR'));
+    } finally { StateController.deactivate(); }
+});
+test('CoreCLR task arguments cannot override the active build platform', () => {
+    selectMicrosoft();
+    assert.throws(() => new DotNetTaskProvider().getBuildTask({ type:'dotnet-meteor.task',args:['-p:Platform=x64'] }), /conflicting task argument/);
 });

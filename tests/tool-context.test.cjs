@@ -10,6 +10,12 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 }).outputText, filename);
 let configuredDotnet = '';
 const vscode = {
+    EventEmitter: class {
+        listeners = new Set();
+        event = callback => { this.listeners.add(callback); return { dispose: () => this.listeners.delete(callback) }; };
+        fire(value) { for (const callback of this.listeners) { callback(value); } }
+        dispose() { this.listeners.clear(); }
+    },
     ThemeIcon: class {}, QuickPickItemKind: { Separator: -1 },
     Uri: { file: value => value }, workspace: { getConfiguration: () => ({ get: key => key === 'dotnetPath' ? configuredDotnet : undefined }) },
     TaskScope: { Workspace: 1 },
@@ -72,10 +78,10 @@ test('explicit host and PATH resolution use absolute executable, cwd and authori
     assert.equal(resolveToolContext(config.project.path).executable, explicit.executable);
     assert.throws(() => resolveToolContext(config.project.path, path.join(root, 'missing')), /Cannot find dotnet/);
 });
-test('build and property queries share SDK host, project cwd, TFM and RID', () => {
+test('build and property queries share SDK host, project cwd, TFM and RID', async () => {
     // Exercise Apple launch properties on every CI host without invoking real Apple tools.
     Object.defineProperty(process, 'platform', { value: 'darwin' });
-    const task = new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
+    const task = await new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
     Interop.getPropertyValue('TargetPath', config.project, 'Debug', config.device);
     assert.equal(task.execution.command, fs.realpathSync(executable));
     assert.equal(task.execution.options.cwd, root);
