@@ -1,6 +1,7 @@
 """Verify release identity, version and architecture before uploading packages."""
 import argparse
 import json
+from pathlib import Path
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -9,6 +10,7 @@ parser.add_argument("version")
 parser.add_argument("--all-targets", action="store_true")
 parser.add_argument("files", nargs="+")
 args = parser.parse_args()
+expected_backend = json.loads(Path(__file__).with_name("coreclr-assets.json").read_text(encoding="utf-8"))
 targets = set()
 for path in args.files:
     with zipfile.ZipFile(path) as archive:
@@ -34,7 +36,7 @@ for path in args.files:
         archive.getinfo(coreclr_dir + "clrdbg.dll")
         archive.getinfo(coreclr_dir + "LICENSE.txt")
         backend = json.loads(archive.read(coreclr_dir + "upstream.json"))
-        assert backend["version"] == "18.0.0", path
+        assert backend == expected_backend, f"{path}: bundled CoreCLR provenance does not match the pinned manifest"
         archive.getinfo("extension/extension/CoreClr.targets")
         archive.getinfo("extension/extension/CoreClr.props")
         archive.getinfo("extension/extension/coreclr-adapter.cjs")

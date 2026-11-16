@@ -1,13 +1,13 @@
 {
-  "version": "18.0.0",
-  "sourceCommit": "7be4dee271353e19dfc1fa7fcdceb346cb5d6f3d",
+  "version": "18.1.0",
+  "sourceCommit": "464032181e0de28ca071da41e109794067398b24",
   "sha256": {
-    "clrdbg_linux-arm64.zip": "ea468edd899b0b1560f843b0ebc38b3921be757a1e3ba57239f66f042b5971c0",
-    "clrdbg_linux-x64.zip": "6de5eda5b48dddba3b60773d58019e5353cb3a9b3646031ee8ff3c154f996038",
-    "clrdbg_osx-arm64.zip": "c60a0c5d65971f638b3690211568550eaec30c1dd0a2953504b6dd493700216a",
-    "clrdbg_osx-x64.zip": "7393d88770565b8268c154c5a6d7e6c0d76482fa69af64196c811b1e1261fdab",
-    "clrdbg_win-arm64.zip": "fc47cb50513a27ae313d8f69f9bc78b0773c98489ea7b3550241de2ebee42907",
-    "clrdbg_win-x64.zip": "8917260e4ba4c9d0a52f38de0e6b118412d137c8a6aedf85c3d1fe757e5e35bb",
-    "RemoteCoreClrLibraries.zip": "25084a12dba52b4a94de1db07354326a5bbed285f4cea50e7566cdb13c810f58"
+    "clrdbg_linux-arm64.zip": "51de325acb5ec59d890f3ff88fe77e82650e188acd142118304b1941333a9fb3",
+    "clrdbg_linux-x64.zip": "767e07f87a9c439b82649ee219bd3c741c4a38832cdd4710db94d3f17a249b91",
+    "clrdbg_osx-arm64.zip": "d39fd396bdc6a217bb55e4cbecb4dd802f788072a8c23f5028c7d5ca12b64eed",
+    "clrdbg_osx-x64.zip": "92e31f6690949d9c4975d56ae64603d21738ced28a1619716958be2d592f0e0d",
+    "clrdbg_win-arm64.zip": "59530a875b1c7efb8c2211c454fed7587f1c935a8f472a0c04268ed4ac4ee36f",
+    "clrdbg_win-x64.zip": "9b98acaf7cd59f6b2eeb3e9ebdd812c52986c79f30d10d75b8bf46c9286e4e53",
+    "RemoteCoreClrLibraries.zip": "03001c64fd5a6df23028e340301026dd9b1319618521e9cf5a01ab805c055ee9"
   }
 }
