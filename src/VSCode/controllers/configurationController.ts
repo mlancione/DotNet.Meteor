@@ -3,6 +3,7 @@ import { StatusBarController } from "./statusbarController";
 import { Project } from '../models/project';
 import { Device } from '../models/device';
 import { supportsFramework } from '../models/deviceSelection';
+import { getMobileTarget, getRuntimePreference } from '../models/runtimeSelection';
 import * as res from '../resources/constants';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -23,18 +24,11 @@ export class ConfigurationController {
 
     public static usesMicrosoftConfiguration(): boolean {
         const settings = vscode.workspace.getConfiguration(res.configId);
-        if (settings.get('coreClrDebugger') !== 'microsoft' || settings.get('runtime') === 'mono'
-            || !ConfigurationController.getTargetFramework()?.includes('-ios')) {
-            return false;
-        }
-        if (ConfigurationController.noDebug && settings.get('coreClrHotReload')) {
-            return false;
-        }
-        if (settings.get('runtime') === 'coreclr') {
-            return true;
-        }
-        // Supported .NET 11+ iOS targets use CoreCLR; .NET 10/Mono stays independent.
-        return Number(ConfigurationController.getTargetFramework()?.match(/^net(\d+)\./)?.[1]) >= 11;
+        const target = getMobileTarget(ConfigurationController.getTargetFramework() ?? '');
+        return settings.get('coreClrDebugger') === 'microsoft'
+            && getRuntimePreference(settings.get('runtime')) !== 'mono'
+            && target?.platform === 'ios' && target.major >= 11
+            && !(ConfigurationController.noDebug && settings.get('coreClrHotReload'));
     }
 
     public static activate(context: vscode.ExtensionContext) {

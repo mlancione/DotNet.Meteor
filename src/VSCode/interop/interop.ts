@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { getMicrosoftDebuggerPaths } from './microsoftDebugger';
 import { resolveToolContext, normalizeXcodePath, ToolContext } from './toolContext';
-import { getRuntimePreference, getRuntimeBuildProperties, getCoreClrReadyToRunPreference, getCoreClrDebugger, CoreClrDebugger, MobileRuntime, selectMobileRuntime } from '../models/runtimeSelection';
+import { getMobileTarget, getRuntimePreference, getRuntimeBuildProperties, getCoreClrReadyToRunPreference, getCoreClrDebugger, CoreClrDebugger, MobileRuntime, selectMobileRuntime } from '../models/runtimeSelection';
 
 export interface RuntimeBuildContext {
     tools: ToolContext;
@@ -104,7 +104,8 @@ export class Interop {
     public static getToolContext(project: Project): ToolContext {
         const settings = vscode.workspace.getConfiguration('dotnetMeteor', vscode.Uri.file(project.path));
         const preference = getRuntimePreference(vscode.workspace.getConfiguration('dotnetMeteor').get('runtime'));
-        const configured = (preference === 'coreclr' ? settings.get<string>('coreClrDotnetPath') : undefined)
+        const mobile = getMobileTarget(ConfigurationController.getTargetFramework() ?? '');
+        const configured = (preference === 'coreclr' && mobile ? settings.get<string>('coreClrDotnetPath') : undefined)
             || settings.get<string>('dotnetPath');
         return resolveToolContext(project.path, configured);
     }
@@ -112,7 +113,7 @@ export class Interop {
     public static getBuildContext(project: Project, configuration: string, device: Device | undefined): RuntimeBuildContext {
         const tools = Interop.getToolContext(project);
         const framework = ConfigurationController.getTargetFramework() ?? '';
-        if (!/-((ios|maccatalyst|android))(?:[\d.]+)?$/i.test(framework)) {
+        if (!getMobileTarget(framework)) {
             return { tools, properties: [] };
         }
         const preference = getRuntimePreference(vscode.workspace.getConfiguration('dotnetMeteor').get('runtime'));

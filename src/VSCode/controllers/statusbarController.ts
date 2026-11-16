@@ -5,7 +5,7 @@ import { Project } from '../models/project';
 import { ProjectItem } from '../models/projectItem';
 import { Device } from '../models/device';
 import { supportsFramework } from '../models/deviceSelection';
-import { getRuntimePreference, getCoreClrDebugger, runtimeChoices, selectMobileRuntime } from '../models/runtimeSelection';
+import { getRuntimePreference, getCoreClrDebugger, runtimeChoices, preferCoreClrFramework, selectMobileRuntime } from '../models/runtimeSelection';
 import { DeviceItem } from '../models/deviceItem';
 import { SeparatorItem } from '../models/separatorItem';
 import { Icons } from '../resources/icons';
@@ -215,9 +215,11 @@ export class StatusBarController {
     public static performSelectProject(item: Project | undefined = undefined) {
         ConfigurationController.project = item ?? StatusBarController.projects[0];
         const frameworks = ConfigurationController.project?.frameworks ?? [];
-        ConfigurationController.targetFramework = StateController.getFramework()
-            ?? frameworks.find(framework => StatusBarController.devices.some(device => supportsFramework(device, framework)))
+        const fallback = frameworks.find(framework => StatusBarController.devices.some(device => supportsFramework(device, framework)))
             ?? frameworks[0];
+        const preference = getRuntimePreference(vscode.workspace.getConfiguration(res.configId).get('runtime'));
+        ConfigurationController.targetFramework = StateController.getFramework()
+            ?? (fallback && preference === 'coreclr' ? preferCoreClrFramework(frameworks, fallback) : fallback);
         if (StatusBarController.projectStatusItem !== undefined)
             StatusBarController.projectStatusItem.text = `${Icons.project} ${ConfigurationController.project?.name ?? ''}`;
         StateController.saveProject();

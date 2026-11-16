@@ -10,13 +10,13 @@ export const runtimeChoices = [
         description: 'Follow the runtime selected by the project and SDK' },
     { label: 'Mono', preference: 'mono' as RuntimePreference,
         description: 'Use the existing Meteor Mono debugger' },
-    { label: 'CoreCLR (Experimental)', preference: 'coreclr' as RuntimePreference,
+    { label: 'CoreCLR', preference: 'coreclr' as RuntimePreference,
         description: 'Use the CoreCLR runtime and debugger; iOS requires .NET 11+' }
 ];
 
 export function getRuntimePreference(value: unknown): RuntimePreference {
     if (value === undefined || value === 'auto' || value === 'mono' || value === 'coreclr') {
-        return value ?? 'auto';
+        return value ?? 'coreclr';
     }
     throw new Error('dotnetMeteor.runtime must be auto, mono or coreclr.');
 }
@@ -35,14 +35,30 @@ export function getCoreClrReadyToRunPreference(value: unknown): CoreClrReadyToRu
     throw new Error('dotnetMeteor.coreClrReadyToRun must be default, disabled or enabled.');
 }
 
+export function getMobileTarget(framework: string): { major: number; platform: string } | undefined {
+    const match = /^net(\d+)\.\d+-(ios|maccatalyst|android)(?:[\d.]+)?$/i.exec(framework);
+    return match ? { major: Number(match[1]), platform: match[2].toLowerCase() } : undefined;
+}
+
+/** Prefer a .NET 11+ target without changing the default platform. */
+export function preferCoreClrFramework(frameworks: string[], fallback: string): string {
+    const platform = getMobileTarget(fallback)?.platform;
+    if (!platform) {
+        return fallback;
+    }
+    return frameworks.find(framework => {
+        const target = getMobileTarget(framework);
+        return target?.platform === platform && target.major >= 11;
+    }) ?? fallback;
+}
+
 export function selectMobileRuntime(preference: RuntimePreference, framework: string,
     properties: Record<string, string>): MobileRuntime {
-    const match = /^net(\d+)\.\d+-(ios|maccatalyst|android)(?:[\d.]+)?$/i.exec(framework);
-    if (!match) {
+    const target = getMobileTarget(framework);
+    if (!target) {
         throw new Error(`Runtime selection is not supported for ${framework}.`);
     }
-    const major = Number(match[1]);
-    const platform = match[2].toLowerCase();
+    const { major, platform } = target;
     if (properties.PublishAot?.toLowerCase() === 'true') {
         throw new Error('NativeAOT apps cannot use the Mono or CoreCLR debugger. Select a non-NativeAOT configuration to debug.');
     }
@@ -54,7 +70,7 @@ export function selectMobileRuntime(preference: RuntimePreference, framework: st
     }
     if (runtime === 'coreclr' && (major < 10 || (platform !== 'android' && major < 11))) {
         const required = platform === 'android' ? '.NET 10+' : '.NET 11+';
-        throw new Error(`CoreCLR on ${platform} requires ${required}. The selected target is ${framework}. Install a compatible SDK/workload and select a compatible target in the configuration picker. Meteor does not retarget your project automatically.`);
+        throw new Error(`CoreCLR on ${platform} requires ${required}. The selected target is ${framework}. Select a compatible project target and SDK/workload, or choose Project Default or Mono to keep debugging this target. Meteor does not retarget your project automatically.`);
     }
     return runtime;
 }

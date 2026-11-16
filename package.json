@@ -1,7 +1,7 @@
 {
   "name": "dotnet-meteor-local",
   "publisher": "localdev",
-  "version": "6.3.4",
+  "version": "6.3.5",
   "description": "Run and Debug .NET Apps (MAUI, Avalonia, Xamarin.Native)",
   "displayName": ".NET Meteor (Local)",
   "author": "Nikita Romanov",
@@ -294,20 +294,20 @@
               "mono",
               "coreclr"
             ],
-            "default": "auto",
+            "default": "coreclr",
             "scope": "application",
             "enumDescriptions": [
               "Follow the project and SDK runtime.",
               "Use Mono and the existing Meteor debugger.",
-              "Use CoreCLR and the experimental debugger. iOS and Mac Catalyst require .NET 11+."
+              "Use CoreCLR. iOS and Mac Catalyst require .NET 11+."
             ],
-            "description": "Global runtime selection for Meteor mobile builds and debugging. Also available in the status bar. Does not change project target frameworks or bypass Xcode compatibility checks."
+            "description": "Global runtime selection for Meteor mobile builds and debugging. Defaults to CoreCLR and prefers an existing .NET 11+ target on first selection. Saved choices are preserved. Does not retarget projects or bypass Xcode compatibility checks."
           },
           "dotnetMeteor.coreClrDotnetPath": {
             "type": "string",
             "default": "",
             "scope": "application",
-            "description": "Optional absolute path to a separate dotnet installation used when CoreCLR is explicitly selected. Leave empty to use dotnetMeteor.dotnetPath or PATH. SDK selection still respects global.json."
+            "description": "Optional absolute path to a separate dotnet installation used for mobile builds when CoreCLR is selected or is the default. Leave empty to use dotnetMeteor.dotnetPath or PATH. SDK selection still respects global.json."
           },
           "dotnetMeteor.coreClrDebuggerPort": {
             "type": "integer",

@@ -141,3 +141,16 @@ test('invalid or removed framework cannot become active', () => {
     status.performSelectProject(project);
     assert.equal(config.getTargetFramework(), 'net9.0-android');
 });
+
+
+test('fresh CoreCLR project selection prefers the .NET 11 target on the original platform', () => {
+    const multi = { ...project, path: '/app/Modern.csproj',
+        frameworks: ['net10.0-ios', 'net11.0-android', 'net11.0-ios27.2'] };
+    status.performSelectProject(multi);
+    assert.equal(config.getTargetFramework(), 'net11.0-ios27.2');
+    assert.equal(config.device, ios);
+
+    status.performSelectFramework('net10.0-ios');
+    status.performSelectProject(multi);
+    assert.equal(config.getTargetFramework(), 'net10.0-ios');
+});

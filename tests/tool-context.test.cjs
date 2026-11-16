@@ -17,7 +17,7 @@ const vscode = {
         dispose() { this.listeners.clear(); }
     },
     ThemeIcon: class {}, QuickPickItemKind: { Separator: -1 },
-    Uri: { file: value => value }, workspace: { getConfiguration: () => ({ get: key => key === 'dotnetPath' ? configuredDotnet : undefined }) },
+    Uri: { file: value => value }, workspace: { getConfiguration: () => ({ get: key => key === 'dotnetPath' ? configuredDotnet : key === 'runtime' ? 'auto' : undefined }) },
     TaskScope: { Workspace: 1 },
     ShellExecution: class { constructor(command, args, options) { Object.assign(this, { command, args, options }); } },
     Task: class { constructor(definition, scope, name, source, execution) { this.execution = execution; } },

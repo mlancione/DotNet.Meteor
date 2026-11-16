@@ -111,12 +111,40 @@ after(() => {
     fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('defaults follow evaluated runtime instead of a framework-name debugger ban', () => {
+test('Project Default follows the evaluated runtime', () => {
     assert.equal(selectMobileRuntime('auto', 'net10.0-ios', { UseMonoRuntime: 'true' }), 'mono');
     assert.equal(selectMobileRuntime('auto', 'net10.0-android', { UseMonoRuntime: 'false' }), 'coreclr');
     assert.equal(selectMobileRuntime('auto', 'net11.0-ios27.0', { UseMonoRuntime: 'false' }), 'coreclr');
     assert.equal(selectMobileRuntime('auto', 'net11.0-maccatalyst27.0', {}), 'coreclr');
 });
+test('unset runtime builds with CoreCLR while explicit settings stay intact', async () => {
+    delete settings.runtime;
+    config.targetFramework = 'net11.0-ios27.0';
+    settings.coreClrDotnetPath = experimental;
+    const contributed = require('../package.json').contributes.configuration[0].properties['dotnetMeteor.runtime'];
+    assert.equal(contributed.default, 'coreclr');
+    assert.equal(getRuntimePreference('auto'), 'auto');
+    assert.equal(getRuntimePreference('mono'), 'mono');
+
+    const task = await new DotNetTaskProvider().getTask({ type: 'dotnet-meteor.task' });
+    assert.equal(task.execution.command, experimental);
+    assert.ok(task.execution.args.includes('-p:UseMonoRuntime=false'));
+
+    config.project.frameworks.push('net11.0');
+    config.targetFramework = 'net11.0';
+    const desktop = Interop.getBuildContext(config.project, 'Debug', undefined);
+    assert.equal(desktop.tools.executable, executable);
+    assert.deepEqual(desktop.properties, []);
+});
+
+test('Microsoft configuration is used for .NET 11 iOS, not for .NET 10 iOS', () => {
+    delete settings.runtime;
+    settings.coreClrDebugger = 'microsoft';
+    assert.equal(config.usesMicrosoftConfiguration(), false);
+    config.targetFramework = 'net11.0-ios27.0';
+    assert.equal(config.usesMicrosoftConfiguration(), true);
+});
+
 test('unsupported runtime choices explain the actual SDK/TFM prerequisite', () => {
     for (const framework of ['net10.0-ios', 'net10.0-ios27.0', 'net10.0-maccatalyst26.5']) {
         assert.throws(() => selectMobileRuntime('coreclr', framework, {}), /requires .NET 11\+/);
