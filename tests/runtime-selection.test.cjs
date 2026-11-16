@@ -192,6 +192,7 @@ test('build preflight rejects incompatible targets and conflicting runtime argum
     assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['-p:UseMonoRuntime=true'] }), /conflicting task argument/);
     assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['/property:Other=1;UseMonoRuntime=true'] }), /conflicting task argument/);
     assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['-p:OutputPath=other'] }), /conflicting task argument/);
+    assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['-p:AppendRuntimeIdentifierToOutputPath=true'] }), /conflicting task argument/);
     assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['--framework', 'net10.0-ios'] }), /conflicting task argument/);
 });
 test('unavailable runtime stays a registered task and fails with its prerequisite', async () => {
@@ -264,15 +265,15 @@ test('Mono descriptor retains the existing hardened executable and merged tool e
     assert.equal(descriptor.options.env.MLAUNCH_PATH, experimental);
 });
 
-test('ReadyToRun is global, defaults to disabled and rejects an invalid preference', () => {
+test('ReadyToRun is global, defaults to the project and SDK setting and rejects an invalid preference', () => {
     const setting = require('../package.json').contributes.configuration.flatMap(section => Object.entries(section.properties))
         .find(([name]) => name === 'dotnetMeteor.coreClrReadyToRun')[1];
-    assert.equal(setting.scope, 'application'); assert.equal(setting.default, 'disabled');
+    assert.equal(setting.scope, 'application'); assert.equal(setting.default, 'default');
     assert.deepEqual(setting.enum, ['default', 'disabled', 'enabled']);
-    assert.equal(getCoreClrReadyToRunPreference(undefined), 'disabled');
+    assert.equal(getCoreClrReadyToRunPreference(undefined), 'default');
     assert.throws(() => getCoreClrReadyToRunPreference('bad'), /must be default, disabled or enabled/);
 });
-for (const [preference, expected] of [[undefined, false], ['disabled', false], ['enabled', true], ['default', undefined]]) {
+for (const [preference, expected] of [[undefined, undefined], ['disabled', false], ['enabled', true], ['default', undefined]]) {
     test(`CoreCLR ReadyToRun ${preference ?? 'initial default'} reaches the build and every scoped query`, () => {
         settings.runtime = 'coreclr'; settings.coreClrReadyToRun = preference;
         config.targetFramework = 'net11.0-ios27.0'; properties.UseMonoRuntime = 'false';
@@ -302,7 +303,8 @@ test('ReadyToRun does not change Mono or desktop build properties, including an 
     assert.deepEqual(desktop.properties, []);
 });
 test('ReadyToRun applies consistently to a local CoreCLR Release debugging configuration', () => {
-    settings.runtime = 'coreclr'; config.targetFramework = 'net11.0-ios27.0'; config.configuration = 'Release';
+    settings.runtime = 'coreclr'; settings.coreClrReadyToRun = 'disabled';
+    config.targetFramework = 'net11.0-ios27.0'; config.configuration = 'Release';
     assert.ok(new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task' }).execution.args.includes('-p:PublishReadyToRun=false'));
 });
 test('ReadyToRun cannot be changed by task-only overrides that bypass path and debugger queries', () => {
@@ -341,7 +343,9 @@ test('Ctrl+F5 watcher and prelaunch build share untrimmed isolated outputs and s
     assert.ok(watch.args.includes(config.project.path));
     assert.ok(watch.args.includes('--property:TrimMode=copy'));
     assert.ok(watch.args.includes('--property:Registrar=partial-static'));
-    assert.ok(watch.args.includes('--property:PublishReadyToRun=false'));
+    assert.ok(watch.args.includes('--property:AppendRuntimeIdentifierToOutputPath=false'));
+    // Hot Reload follows the global ReadyToRun setting.
+    assert.ok(watch.args.includes('--property:PublishReadyToRun=true'));
     assert.ok(!watch.args.some(value => value.startsWith('-p:')));
     assert.ok(watch.args.includes('GREETING=value with spaces'));
     const task = new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task' });
@@ -388,9 +392,13 @@ test('Microsoft task and path queries share isolated outputs and matching extern
     config.getProgramPath(config.project, 'Debug', config.device, build);
     const query = calls.find(call => call.args?.includes('-getProperty:TargetPath'));
     for (const arg of ['-p:BaseOutputPath=bin/meteor-coreclr-microsoft/', '-p:BaseIntermediateOutputPath=obj/meteor-coreclr-microsoft/',
-        '-p:MeteorCoreClrAgentName=libvsdbgremotecoreclrtarget.dylib', '-p:TrimMode=copy', '-p:MtouchLink=None', '-p:PublishReadyToRun=false']) {
+        '-p:MeteorCoreClrAgentName=libvsdbgremotecoreclrtarget.dylib', '-p:TrimMode=copy', '-p:MtouchLink=None']) {
         assert.ok(task.execution.args.includes(arg), arg); assert.ok(query.args.includes(arg), arg);
     }
+    // Only the SDK-watch lane drops the runtime from output paths.
+    assert.ok(!task.execution.args.some(arg => arg.startsWith('-p:AppendRuntimeIdentifierToOutputPath=')));
+    // The initial ReadyToRun setting follows the project and SDK.
+    assert.ok(![...task.execution.args, ...query.args].some(arg => arg.startsWith('-p:PublishReadyToRun=')));
     assert.ok(task.execution.args.includes(`-p:RemoteCoreclrTargetDir=${path.join(microsoftRoot, 'dist/resources/VsdbgRemoteCoreclrTarget')}`));
     assert.ok(!task.execution.args.some(arg => arg.includes('bin/Remote/remote-target')));
     assert.throws(() => new DotNetTaskProvider().getBuildTask({ type: 'dotnet-meteor.task', args: ['-p:MeteorCoreClrAgentName=other'] }), /conflicting/);

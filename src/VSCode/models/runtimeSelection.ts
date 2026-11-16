@@ -30,7 +30,7 @@ export function getCoreClrDebugger(value: unknown): CoreClrDebugger {
 
 export function getCoreClrReadyToRunPreference(value: unknown): CoreClrReadyToRunPreference {
     if (value === undefined || value === 'default' || value === 'disabled' || value === 'enabled') {
-        return value ?? 'disabled';
+        return value ?? 'default';
     }
     throw new Error('dotnetMeteor.coreClrReadyToRun must be default, disabled or enabled.');
 }
@@ -77,7 +77,7 @@ export function selectMobileRuntime(preference: RuntimePreference, framework: st
 
 export function getRuntimeBuildProperties(runtime: MobileRuntime, preference: RuntimePreference,
     targetsPath: string, remoteTargetPath: string, originalAfterTargets?: string, originalBeforeProps?: string,
-    readyToRun: CoreClrReadyToRunPreference = 'disabled', csharpHotReload = false, debuggerBackend: CoreClrDebugger = 'meteor'): string[] {
+    readyToRun: CoreClrReadyToRunPreference = 'default', csharpHotReload = false, debuggerBackend: CoreClrDebugger = 'meteor'): string[] {
     if (runtime === 'mono') {
         return preference === 'mono' ? ['-p:UseMonoRuntime=true'] : [];
     }
@@ -96,13 +96,19 @@ export function getRuntimeBuildProperties(runtime: MobileRuntime, preference: Ru
     if (microsoft) {
         properties.push('-p:MeteorCoreClrAgentName=libvsdbgremotecoreclrtarget.dylib');
     }
-    if (csharpHotReload || readyToRun !== 'default') {
-        properties.push(`-p:PublishReadyToRun=${!csharpHotReload && readyToRun === 'enabled'}`);
+    if (readyToRun !== 'default') {
+        properties.push(`-p:PublishReadyToRun=${readyToRun === 'enabled'}`);
     }
     if (csharpHotReload || microsoft) {
         properties.push('-p:TrimMode=copy', '-p:MtouchLink=None', '-p:Registrar=partial-static',
             '-p:HotReloadCompatibleBuild=true', '-p:MtouchDebug=true', '-p:DebuggerSupport=true',
             '-p:Optimize=false', '-p:DebugSymbols=true', '-p:DebugType=portable');
+    }
+    if (csharpHotReload) {
+        // SDK watch gives every project it loads the app's runtime, but app builds remove it from
+        // library references. Runtime-specific output folders would then never contain the
+        // libraries' builds, and every library edit would need a restart (ENC1008).
+        properties.push('-p:AppendRuntimeIdentifierToOutputPath=false');
     }
     if (originalAfterTargets) {
         properties.push(`-p:MeteorOriginalAfterTargets=${originalAfterTargets}`);
