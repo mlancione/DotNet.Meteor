@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { ProcessArgumentBuilder } from './processArgumentBuilder';
+import { ProcessRunner } from './processRunner';
 import { ReadOnlyBrokerClient } from './readOnlyBrokerClient';
 import { resolveToolContext } from './toolContext';
 
@@ -17,6 +19,32 @@ interface ProjectSnapshot {
     targetFrameworks?: string[];
     assetsFilePath?: string;
     keyOutputs?: Record<string, string>;
+}
+interface DesignTimeSlice {
+    properties?: { TargetFramework?: string; TargetPath?: string; ProjectAssetsFile?: string; };
+    lastDesignTimeBuildSucceeded?: boolean;
+}
+interface ProjectData {
+    workspace?: { configuration?: string; solutionPath?: string; };
+    projects?: { projectPath: string; slices?: DesignTimeSlice[]; }[];
+}
+const projectDataQuery = {
+    includeWorkspaceState: true,
+    properties: ['TargetFramework', 'TargetPath', 'ProjectAssetsFile']
+};
+interface DevKitV2 {
+    dataModel: {
+        queryProjects(query: typeof projectDataQuery): Promise<ProjectData>;
+        onDidChangeProjects(query: typeof projectDataQuery, listener: (data: ProjectData) => void): vscode.Disposable;
+    };
+    workspaceDotnet: {
+        getState(): { kind?: string; host?: { executablePath?: string; }; sdk?: { version?: string; }; };
+    };
+}
+interface BaselineSlice {
+    framework?: string;
+    target?: string;
+    assets?: string;
 }
 export interface CSharpConfiguration { name: string; platform: string; }
 
@@ -36,6 +64,21 @@ function canonicalPath(value: string): string {
 
 function platformName(value: string): string { return value.replace(/\s/g, '').toLowerCase(); }
 
+function parseConfiguration(value: string | undefined): CSharpConfiguration | undefined {
+    const [name, platform] = (value ?? '').split('|').map(part => part.trim());
+    return name && platform ? { name, platform } : undefined;
+}
+
+function matchesConfiguration(left: CSharpConfiguration | undefined, right: CSharpConfiguration): boolean {
+    return !!left && left.name === right.name && platformName(left.platform) === platformName(right.platform);
+}
+
+function isDevKitV2(api: any): api is DevKitV2 {
+    return typeof api?.dataModel?.queryProjects === 'function'
+        && typeof api.dataModel.onDidChangeProjects === 'function'
+        && typeof api.workspaceDotnet?.getState === 'function';
+}
+
 async function deadline<T>(promise: PromiseLike<T>, operation: string): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -49,6 +92,44 @@ async function deadline<T>(promise: PromiseLike<T>, operation: string): Promise<
     }
 }
 
+// NuGet may omit the platform qualifier in the resolved project entry. Compare
+// its runtime framework and version, then keep the declared platform check too.
+function referenceFrameworkVersion(framework: string): string | undefined {
+    const long = /^\.(NETCoreApp|NETStandard),Version=v(\d+\.\d+)(?:,|$)/i.exec(framework);
+    if (long) {
+        return (long[1].toLowerCase() === 'netcoreapp' ? 'net' : 'netstandard') + long[2];
+    }
+    const short = /^(net|netcoreapp|netstandard)(\d+\.\d+)(?:-|$)/i.exec(framework);
+    return short ? (short[1].toLowerCase() === 'netcoreapp' ? 'net' : short[1].toLowerCase()) + short[2] : undefined;
+}
+
+function resolvedReferenceFrameworks(projectPath: string, assetsFilePath: string, framework: string): Map<string, string> {
+    const assets = JSON.parse(fs.readFileSync(assetsFilePath, 'utf8')) as {
+        targets?: Record<string, Record<string, { type?: string; framework?: string; }>>;
+        libraries?: Record<string, { msbuildProject?: string; }>;
+        project?: { frameworks?: Record<string, { targetAlias?: string; }>; };
+    };
+    const aliases = new Set([framework, ...Object.entries(assets.project?.frameworks ?? {})
+        .filter(([, value]) => value.targetAlias === framework).map(([key]) => key)]);
+    const versions = new Map<string, Set<string>>();
+    for (const [target, dependencies] of Object.entries(assets.targets ?? {})) {
+        if (!aliases.has(target.split('/')[0])) {
+            continue;
+        }
+        for (const [key, dependency] of Object.entries(dependencies)) {
+            const relative = assets.libraries?.[key]?.msbuildProject;
+            const version = dependency.type === 'project' && referenceFrameworkVersion(dependency.framework ?? '');
+            if (relative && version) {
+                const reference = canonicalPath(path.resolve(path.dirname(projectPath), relative));
+                const seen = versions.get(reference) ?? new Set<string>();
+                seen.add(version);
+                versions.set(reference, seen);
+            }
+        }
+    }
+    return new Map([...versions].filter(([, seen]) => seen.size === 1).map(([reference, seen]) => [reference, [...seen][0]]));
+}
+
 /** Read-only broker integration. Configuration changes belong to Dev Kit's picker. */
 export class CSharpProjectSystem implements vscode.Disposable {
     private readonly changed = new vscode.EventEmitter<void>();
@@ -59,6 +140,8 @@ export class CSharpProjectSystem implements vscode.Disposable {
     private environment?: ReadOnlyBrokerClient;
     private subscription?: DisposableProxy;
     private cache?: ReadOnlyBrokerClient;
+    private v2?: DevKitV2;
+    private v2Delivery = 0;
     private disposed = false;
     public get failure(): string | undefined { return this.error?.message; }
 
@@ -67,8 +150,7 @@ export class CSharpProjectSystem implements vscode.Disposable {
             && canonicalPath(project.projectId.fullPath) === canonicalPath(projectPath))) {
             return undefined;
         }
-        const [name, platform] = (this.state.configuration ?? '').split('|');
-        return name?.trim() && platform?.trim() ? { name: name.trim(), platform: platform.trim() } : undefined;
+        return parseConfiguration(this.state.configuration);
     }
 
     public async ready(projectPath: string): Promise<CSharpConfiguration> {
@@ -79,6 +161,18 @@ export class CSharpProjectSystem implements vscode.Disposable {
         await this.connection;
         if (this.error) {
             throw this.error;
+        }
+        if (this.v2) {
+            // A subscription can stop delivering after a Dev Kit service restart.
+            // Refresh the selection for builds, even when Hot Reload is disabled.
+            const delivery = this.v2Delivery;
+            const data = await deadline(this.v2.dataModel.queryProjects(projectDataQuery), 'project data query');
+            if (this.disposed) {
+                throw new Error('C# project-system connection has been disposed. Reload VS Code.');
+            }
+            if (this.v2Delivery === delivery) {
+                this.publishProjectData(data);
+            }
         }
         const current = this.configuration(projectPath);
         if (current) {
@@ -93,14 +187,14 @@ export class CSharpProjectSystem implements vscode.Disposable {
                         reject(this.error);
                     } else if (value) {
                         resolve(value);
-                    } else if (this.state?.configuration && this.state.projects?.length) {
+                    } else if (!this.v2 && this.state?.configuration && this.state.projects?.length) {
                         reject(new Error('The selected Meteor project is not loaded in C# Dev Kit. Open its solution in C# Dev Kit before Microsoft debugging.'));
                     }
                 });
-                if (this.state?.configuration && this.state.projects?.length) {
+                if (!this.v2 && this.state?.configuration && this.state.projects?.length) {
                     reject(new Error('The selected Meteor project is not loaded in C# Dev Kit. Open its solution before Microsoft debugging.'));
                 }
-            }), 'configuration loading');
+            }), `configuration loading for ${path.basename(projectPath)}`);
         } finally {
             listener?.dispose();
         }
@@ -116,6 +210,17 @@ export class CSharpProjectSystem implements vscode.Disposable {
             }
             const extension = vscode.extensions.getExtension('ms-dotnettools.csdevkit');
             const api = await deadline(extension?.activate() ?? Promise.resolve(undefined), 'activation');
+            if (!api?.isLimitedActivation && isDevKitV2(api)) {
+                this.v2 = api;
+                subscription = api.dataModel.onDidChangeProjects(projectDataQuery, data => {
+                    if (!this.disposed && !this.error) {
+                        this.v2Delivery++;
+                        this.publishProjectData(data);
+                    }
+                });
+                this.subscription = subscription;
+                return;
+            }
             if (!api?.serviceBroker?.getPipe || !api.getBrokeredServiceServerPipeName || api.isLimitedActivation) {
                 throw new Error('C# Dev Kit does not expose its project-system broker. Enable compatible Microsoft C#/Dev Kit extensions or use the Meteor backend.');
             }
@@ -168,51 +273,118 @@ export class CSharpProjectSystem implements vscode.Disposable {
         }
     }
 
-    public async validateBaseline(projectPath: string, framework: string, targetPath: string,
-        assetsFilePath: string, dotnetExecutable: string): Promise<void> {
-        const active = await this.ready(projectPath);
-        const version = this.state?.version;
-        const projects = await deadline(this.cache!.getAll<Record<string, ProjectSnapshot>>(), 'project baseline query');
-        const project = Object.entries(projects).find(([name]) => canonicalPath(name) === canonicalPath(projectPath))?.[1];
-        if (!project) {
-            throw new Error('C# Dev Kit has not loaded the project baseline yet. Wait for project loading to finish, then retry F5.');
+    private publishProjectData(data: ProjectData): void {
+        const configuration = data.workspace?.configuration;
+        const solution = data.workspace?.solutionPath;
+        const paths = [...new Set((data.projects ?? []).map(project => project.projectPath))].sort();
+        if (this.state && configuration === this.state.configuration && solution === this.state.solutions?.[0]
+            && paths.length === this.state.projects?.length
+            && paths.every((value, index) => value === this.state!.projects![index].projectId?.fullPath)) {
+            return;
         }
-        const frameworks = project.targetFramework ? [project.targetFramework] : project.targetFrameworks ?? [];
-        if (!frameworks.includes(framework)) {
-            throw new Error(`C# Dev Kit uses ${frameworks.join(', ') || 'an unknown framework'}, but Meteor selected ${framework}. Select the matching C# configuration and Meteor target framework, then reload VS Code.`);
+        this.state = {
+            version: (this.state?.version ?? 0) + 1,
+            configuration,
+            solutions: solution ? [solution] : [],
+            projects: paths.map(fullPath => ({ projectId: { fullPath } }))
+        };
+        this.changed.fire();
+    }
+
+    private async readBaseline(active: CSharpConfiguration, projectPath: string): Promise<{
+        projects: Map<string, BaselineSlice[]>;
+        executable?: string;
+        sdkVersion?: string;
+    }> {
+        if (this.v2) {
+            const data = await deadline(this.v2.dataModel.queryProjects(projectDataQuery), 'project baseline query');
+            if (!matchesConfiguration(parseConfiguration(data.workspace?.configuration), active)) {
+                throw new Error('C# Dev Kit changed its project configuration during launch setup. Retry F5 after project loading finishes.');
+            }
+            const projects = new Map((data.projects ?? []).map(project => [
+                canonicalPath(project.projectPath),
+                (project.slices ?? []).filter(slice => slice.lastDesignTimeBuildSucceeded === true).map(slice => ({
+                    framework: slice.properties?.TargetFramework,
+                    target: slice.properties?.TargetPath,
+                    assets: slice.properties?.ProjectAssetsFile
+                }))
+            ]));
+            const sdk = this.v2.workspaceDotnet.getState();
+            return {
+                projects,
+                executable: sdk?.kind === 'ready' ? sdk.host?.executablePath : undefined,
+                sdkVersion: sdk?.kind === 'ready' ? sdk.sdk?.version : undefined
+            };
         }
-        const output = Object.entries(project.keyOutputs ?? {}).find(([key]) => {
-            const [name, platform] = key.split('|');
-            return name === active.name && platformName(platform ?? '') === platformName(active.platform);
-        })?.[1];
-        if (!path.isAbsolute(targetPath) || !path.isAbsolute(assetsFilePath) || !output || canonicalPath(output) !== canonicalPath(targetPath)
-            || !project.assetsFilePath || canonicalPath(project.assetsFilePath) !== canonicalPath(assetsFilePath)) {
-            throw new Error('C# Dev Kit and Meteor use different assembly or intermediate output paths. Align the selected project configuration with Meteor\'s Microsoft build paths (see README), then reload VS Code. Hot Reload would otherwise update a different assembly.');
-        }
-        // Dev Kit exposes its executable on process tasks. Its custom build terminal
-        // does not, so also enforce the editor process SDK environment in that case.
+
+        const snapshots = await deadline(this.cache!.getAll<Record<string, ProjectSnapshot>>(), 'project baseline query');
+        const projects = new Map(Object.entries(snapshots).map(([name, project]) => {
+            const target = Object.entries(project.keyOutputs ?? {}).find(([key]) =>
+                matchesConfiguration(parseConfiguration(key), active))?.[1];
+            const frameworks = project.targetFramework ? [project.targetFramework] : project.targetFrameworks ?? [];
+            return [canonicalPath(name), frameworks.map(framework => ({ framework, target, assets: project.assetsFilePath }))];
+        }));
+        // Legacy Dev Kit exposes its executable on process tasks. Its custom build terminal
+        // does not, so use the editor process SDK environment in that case.
         const tasks = await deadline(vscode.tasks.fetchTasks({ type: 'dotnet' }), 'SDK query');
         const solution = this.state?.solutions?.[0];
         const task = tasks.find(task => task.source === 'dotnet' && task.execution instanceof vscode.ProcessExecution
             && (!solution || !task.definition.file || (typeof task.definition.file === 'string' && canonicalPath(task.definition.file) === canonicalPath(solution))));
         const executable = (task?.execution as vscode.ProcessExecution | undefined)?.process ?? resolveToolContext(projectPath).executable;
-        if (!executable || !path.isAbsolute(executable) || canonicalPath(executable) !== canonicalPath(dotnetExecutable)) {
-            throw new Error(`VS Code's project SDK (${executable}) differs from Meteor's SDK (${dotnetExecutable}). Fully quit and restart VS Code with the selected SDK in PATH and DOTNET_ROOT. Changing Meteor's SDK path alone does not restart the C# project system.`);
+        return { projects, executable };
+    }
+
+    public async validateBaseline(projectPath: string, framework: string, targetPath: string,
+        assetsFilePath: string, dotnetExecutable: string): Promise<void> {
+        const active = await this.ready(projectPath);
+        const version = this.state?.version;
+        const { projects, executable, sdkVersion } = await this.readBaseline(active, projectPath);
+        const project = projects.get(canonicalPath(projectPath));
+        if (!project?.length) {
+            throw new Error('C# Dev Kit has not loaded the project baseline yet. Wait for the design-time build to succeed, then retry F5.');
         }
-        // Restore's graph includes project-reference intermediate paths and negotiated frameworks.
+        const matching = project.filter(slice => slice.framework === framework);
+        if (!matching.length) {
+            const frameworks = project.map(slice => slice.framework).filter(Boolean);
+            throw new Error(`C# Dev Kit uses ${frameworks.join(', ') || 'an unknown framework'}, but Meteor selected ${framework}. Select the matching C# configuration and Meteor target framework.`);
+        }
+        if (!path.isAbsolute(targetPath) || !path.isAbsolute(assetsFilePath) || !matching.some(slice =>
+            slice.target && canonicalPath(slice.target) === canonicalPath(targetPath)
+            && slice.assets && canonicalPath(slice.assets) === canonicalPath(assetsFilePath))) {
+            throw new Error('C# Dev Kit and Meteor use different assembly or intermediate output paths. Align the selected project configuration with Meteor\'s Microsoft build paths (see README), then reload VS Code. Hot Reload would otherwise update a different assembly.');
+        }
+        if (!executable || !path.isAbsolute(executable) || canonicalPath(executable) !== canonicalPath(dotnetExecutable)) {
+            throw new Error(`VS Code's project SDK (${executable ?? 'unavailable'}) differs from Meteor's SDK (${dotnetExecutable}). Fully quit and restart VS Code with the selected SDK in PATH and DOTNET_ROOT. Changing Meteor's SDK path alone does not restart the C# project system.`);
+        }
+        if (this.v2) {
+            const version = ProcessRunner.runSync(new ProcessArgumentBuilder(dotnetExecutable).append('--version'), {
+                cwd: path.dirname(projectPath),
+                timeout: 10000,
+                env: { ...process.env, DOTNET_ROOT: path.dirname(dotnetExecutable), DOTNET_MULTILEVEL_LOOKUP: '0' }
+            });
+            if (!sdkVersion || version !== sdkVersion) {
+                throw new Error(`C# Dev Kit selected SDK ${sdkVersion ?? 'unavailable'}, but Meteor selected ${version ?? 'unavailable'}. Check the solution and project global.json files, then restart VS Code.`);
+            }
+        }
+        // The restore spec lists declared frameworks and intermediate paths. Where
+        // available, the resolved assets also identify the reference runtime version.
         const graphPath = path.join(path.dirname(assetsFilePath), `${path.basename(projectPath)}.nuget.dgspec.json`);
         if (fs.existsSync(graphPath)) {
             const graph = JSON.parse(fs.readFileSync(graphPath, 'utf8'));
+            const resolved = this.v2 && fs.existsSync(assetsFilePath)
+                ? resolvedReferenceFrameworks(projectPath, assetsFilePath, framework) : new Map<string, string>();
             for (const [referencePath, specification] of Object.entries(graph.projects ?? {}) as [string, any][]) {
                 if (canonicalPath(referencePath) === canonicalPath(projectPath)) {
                     continue;
                 }
-                const reference = Object.entries(projects).find(([name]) => canonicalPath(name) === canonicalPath(referencePath))?.[1];
+                const reference = projects.get(canonicalPath(referencePath));
                 const restorePath = specification.restore?.outputPath;
-                const referenceFrameworks = reference?.targetFramework ? [reference.targetFramework] : reference?.targetFrameworks ?? [];
-                if (!reference?.assetsFilePath || typeof restorePath !== 'string'
-                    || canonicalPath(reference.assetsFilePath) !== canonicalPath(path.join(restorePath, 'project.assets.json'))
-                    || !referenceFrameworks.some(value => Object.keys(specification.frameworks ?? {}).includes(value))) {
+                const frameworkSet = Object.keys(specification.frameworks ?? {});
+                const resolvedFramework = resolved.get(canonicalPath(referencePath));
+                if (typeof restorePath !== 'string' || !reference?.some(slice =>
+                    slice.assets && canonicalPath(slice.assets) === canonicalPath(path.join(restorePath, 'project.assets.json'))
+                    && slice.framework && frameworkSet.includes(slice.framework)
+                    && (!resolvedFramework || referenceFrameworkVersion(slice.framework) === resolvedFramework))) {
                     throw new Error(`C# Dev Kit's baseline for referenced project ${path.basename(referencePath)} differs from Meteor's restore graph. Select the matching C# configuration and reload VS Code before Hot Reload.`);
                 }
             }

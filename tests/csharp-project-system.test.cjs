@@ -38,6 +38,8 @@ const vscode = {
 };
 const load = Module._load;
 Module._load = function(id, ...args) { return id === 'vscode' ? vscode : load.call(this, id, ...args); };
+const { ProcessRunner } = require('../src/VSCode/interop/processRunner.ts');
+const originalRunSync = ProcessRunner.runSync;
 const { CSharpProjectSystem, csharpProjectSystem } = require('../src/VSCode/interop/csharpProjectSystem.ts');
 const { ReadOnlyBrokerClient, BrokerMessageReader, BrokerMessageWriter } = require('../src/VSCode/interop/readOnlyBrokerClient.ts');
 function broker() {
@@ -74,6 +76,7 @@ beforeEach(() => {
     fs.rmSync(path.join(path.dirname(assets), 'App.csproj.nuget.dgspec.json'), { force: true });
 });
 afterEach(async () => {
+    ProcessRunner.runSync = originalRunSync;
     model.dispose();
     await flush();
     for (const p of peers) { await p.writer.settled(); p.rpc.dispose(); p.mux.dispose(); }
@@ -159,4 +162,114 @@ test('MessagePack reader rejects oversized frames without allocating the payload
     reader.onError(e=>problems.push(e)); reader.listen(x=>received.push(x));
     const header=Buffer.alloc(4); header.writeUInt32BE(32*1024*1024);stream.write(header);
     assert.equal(received.length,0);assert.match(problems[0].message,/Invalid/);reader.dispose();
+});
+
+function v2Project(projectPath, framework, target, assetsPath, succeeded = true) {
+    return { projectPath, slices: [{
+        properties: { TargetFramework: framework, TargetPath: target, ProjectAssetsFile: assetsPath },
+        lastDesignTimeBuildSucceeded: succeeded
+    }] };
+}
+
+function setupV2(projects) {
+    let listener;
+    const v2 = {
+        snapshot: { workspace: { configuration: 'DebugCoreCLR|Any CPU', solutionPath: solution }, projects },
+        host: sdk,
+        sdkVersion: '11.0.100',
+        subscriptions: 0,
+        disposed: false,
+        emit(snapshot) { this.snapshot = snapshot; listener(snapshot); }
+    };
+    ProcessRunner.runSync = (args, options) => {
+        assert.equal(args.getCommand(), sdk);
+        assert.equal(options.cwd, root);
+        assert.deepEqual(args.getArguments(), ['--version']);
+        return '11.0.100';
+    };
+    active = {
+        ...active,
+        dataModel: {
+            async queryProjects(query) {
+                assert.equal(query.includeWorkspaceState, true);
+                assert.deepEqual(query.properties, ['TargetFramework', 'TargetPath', 'ProjectAssetsFile']);
+                return v2.snapshot;
+            },
+            onDidChangeProjects(query, callback) {
+                v2.subscriptions++;
+                listener = callback;
+                return { dispose: () => { v2.disposed = true; } };
+            }
+        },
+        workspaceDotnet: { getState: () => ({ kind: 'ready', host: { executablePath: v2.host }, sdk: { version: v2.sdkVersion } }) }
+    };
+    return v2;
+}
+
+test('v2 waits for the selected project and tracks Dev Kit configuration without connecting to the retired cache', async () => {
+    const app = v2Project(project, 'net11.0-ios', dll, assets);
+    const v2 = setupV2([]);
+    const loading = Promise.all([model.ready(project), model.ready(project)]);
+    await flush();
+    v2.emit({ ...v2.snapshot, projects: [v2Project(library, 'net11.0', dll, assets)] });
+    await flush();
+    v2.emit({ ...v2.snapshot, projects: [...v2.snapshot.projects, app] });
+    assert.deepEqual((await loading)[0], { name: 'DebugCoreCLR', platform: 'Any CPU' });
+    await model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk);
+    assert.equal(v2.subscriptions, 1);
+    assert.deepEqual(requests, []);
+    v2.emit({ ...v2.snapshot, workspace: { configuration: 'Release|x64' } });
+    assert.deepEqual(model.configuration(project), { name: 'Release', platform: 'x64' });
+    model.dispose();
+    assert.equal(v2.disposed, true);
+});
+
+test('v2 requires one successful slice to match both outputs and the actual workspace SDK host', async () => {
+    const unbuilt = v2Project(project, 'net11.0-ios', dll, assets, false);
+    const v2 = setupV2([unbuilt]);
+    await assert.rejects(model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk), /design-time build/);
+    const app = v2Project(project, 'net11.0-ios', dll, path.join(root, 'unrelated.assets.json'));
+    app.slices.push(...v2Project(project, 'net11.0-ios', path.join(root, 'Other.dll'), assets).slices);
+    v2.emit({ ...v2.snapshot, projects: [app] });
+    await assert.rejects(model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk), /different assembly/);
+    v2.emit({ ...v2.snapshot, projects: [v2Project(project, 'net11.0-ios', dll, assets)] });
+    v2.host = path.join(root, 'other-host');
+    await assert.rejects(model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk), /project SDK.*differs/);
+    v2.host = sdk; v2.sdkVersion = '11.0.101';
+    await assert.rejects(model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk), /selected SDK 11.0.101/);
+});
+
+test('v2 can validate a non-primary .NET 11 reference slice', async () => {
+    const libraryAssets = path.join(root, 'Library/obj/project.assets.json');
+    fs.writeFileSync(path.join(path.dirname(assets), 'App.csproj.nuget.dgspec.json'), JSON.stringify({
+        projects: { [library]: { restore: { outputPath: path.dirname(libraryAssets) }, frameworks: { 'net10.0': {}, 'net11.0': {} } } }
+    }));
+    fs.writeFileSync(assets, JSON.stringify({
+        targets: { 'net11.0-ios/iossimulator-arm64': {
+            'Library/1.0.0': { type: 'project', framework: '.NETCoreApp,Version=v11.0' }
+        } },
+        libraries: { 'Library/1.0.0': { msbuildProject: 'Library.csproj' } }
+    }));
+    const reference = v2Project(library, 'net10.0', undefined, libraryAssets);
+    const v2 = setupV2([v2Project(project, 'net11.0-ios', dll, assets), reference]);
+    await assert.rejects(model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk), /referenced project Library.csproj/);
+    reference.slices.push(...v2Project(library, 'net11.0', undefined, libraryAssets).slices);
+    await model.validateBaseline(project, 'net11.0-ios', dll, assets, sdk);
+    // Simulate a silently disconnected subscription: launch still refreshes.
+    v2.snapshot = { ...v2.snapshot, workspace: { configuration: 'Release|Any CPU' } };
+    assert.equal(model.configuration(project).name, 'DebugCoreCLR');
+    assert.equal((await model.ready(project)).name, 'Release');
+});
+
+test('v2 does not overwrite a newer configuration notification with an in-flight query', async () => {
+    const v2 = setupV2([v2Project(project, 'net11.0-ios', dll, assets)]);
+    await model.ready(project);
+    const old = v2.snapshot;
+    let finish;
+    active.dataModel.queryProjects = () => new Promise(resolve => { finish = resolve; });
+    const ready = model.ready(project);
+    await flush();
+    v2.emit({ ...old, workspace: { configuration: 'Release|x64' } });
+    finish(old);
+    assert.deepEqual(await ready, { name: 'Release', platform: 'x64' });
 });
